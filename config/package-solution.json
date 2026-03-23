@@ -1,0 +1,46 @@
+{
+  "$schema": "https://developer.microsoft.com/json-schemas/spfx-build/package-solution.schema.json",
+  "solution": {
+    "name": "3-edge-dashboard-client-side-solution",
+    "id": "419d5e9e-da91-42fb-9d76-a822cae5a3df",
+    "version": "1.0.0.0",
+    "includeClientSideAssets": true,
+    "skipFeatureDeployment": true,
+    "isDomainIsolated": false,
+    "developer": {
+      "name": "",
+      "websiteUrl": "",
+      "privacyUrl": "",
+      "termsOfUseUrl": "",
+      "mpnId": "Undefined-1.22.2"
+    },
+    "metadata": {
+      "shortDescription": {
+        "default": "3-edge-dashboard description"
+      },
+      "longDescription": {
+        "default": "3-edge-dashboard description"
+      },
+      "screenshotPaths": [],
+      "videoUrl": "",
+      "categories": []
+    },
+    "webApiPermissionRequests": [
+      {
+        "resource": "Microsoft Graph",
+        "scope": "Mail.Send"
+      }
+    ],
+    "features": [
+      {
+        "title": "3-edge-dashboard Feature",
+        "description": "The feature that activates elements of the 3-edge-dashboard solution.",
+        "id": "cf832554-577b-425c-ab75-997b2b9471e7",
+        "version": "1.0.0.0"
+      }
+    ]
+  },
+  "paths": {
+    "zippedPackage": "solution/3-edge-dashboard.sppkg"
+  }
+}
