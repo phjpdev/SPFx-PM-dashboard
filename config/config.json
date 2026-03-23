@@ -1,0 +1,18 @@
+{
+  "$schema": "https://developer.microsoft.com/json-schemas/spfx-build/config.2.0.schema.json",
+  "version": "2.0",
+  "bundles": {
+    "manager-dashboard-web-part": {
+      "components": [
+        {
+          "entrypoint": "./lib/webparts/managerDashboard/ManagerDashboardWebPart.js",
+          "manifest": "./src/webparts/managerDashboard/ManagerDashboardWebPart.manifest.json"
+        }
+      ]
+    }
+  },
+  "externals": {},
+  "localizedResources": {
+    "ManagerDashboardWebPartStrings": "lib/webparts/managerDashboard/loc/{locale}.js"
+  }
+}

@@ -1,0 +1,106 @@
+// ── 3 Edge Design Dashboard — Shared SCSS ──────────────────────────────────
+// CSS variable design tokens matching the original HTML dashboard
+
+:root {
+  --bg: #f0f2f5;
+  --s0: #f7f8fa;
+  --s1: #ffffff;
+  --s2: #f0f2f5;
+  --s3: #e8eaee;
+  --bd: #d0d5de;
+  --bd2: #b8bfcc;
+  --bd3: #a0a8b8;
+  --3eg: #2a9e2a;
+  --3eg2: #3db83d;
+  --3eg3: rgba(42, 158, 42, 0.12);
+  --3eg4: rgba(42, 158, 42, 0.06);
+  --3egk: #e8f5e8;
+  --gn: #2a9e2a;
+  --gn2: rgba(42, 158, 42, 0.12);
+  --am: #d4880a;
+  --am2: rgba(212, 136, 10, 0.12);
+  --rd: #cc3333;
+  --rd2: rgba(204, 51, 51, 0.12);
+  --bl: #2e6db4;
+  --bl2: rgba(46, 109, 180, 0.10);
+  --or: #d4600a;
+  --or2: rgba(212, 96, 10, 0.10);
+  --pu: #6b4fc8;
+  --pu2: rgba(107, 79, 200, 0.10);
+  --gy: #5a6a80;
+  --gy2: rgba(90, 106, 128, 0.10);
+  --t1: #1a2030;
+  --t2: #3a4a60;
+  --t3: #5a6e88;
+  --t4: #8a9bb0;
+  --hdr: #111418;
+}
+
+.dashboardRoot {
+  font-family: 'Montserrat', -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
+  min-height: 100vh;
+  display: flex;
+  flex-direction: column;
+  background: var(--bg);
+  color: var(--t1);
+
+  * {
+    box-sizing: border-box;
+  }
+
+  input, select, textarea {
+    font-family: 'Montserrat', sans-serif;
+    font-size: 13px;
+    padding: 8px 12px;
+    border: 1px solid var(--bd);
+    border-radius: 2px;
+    background: var(--s2);
+    color: var(--t1);
+    width: 100%;
+    outline: none;
+    transition: border-color 0.15s;
+
+    &:focus {
+      border-color: var(--3eg);
+    }
+  }
+
+  select {
+    cursor: pointer;
+  }
+
+  textarea {
+    resize: vertical;
+    line-height: 1.6;
+  }
+
+  table {
+    width: 100%;
+    border-collapse: collapse;
+    font-size: 14.5px;
+  }
+}
+
+@keyframes fadeIn {
+  from { opacity: 0; transform: translateY(6px); }
+  to   { opacity: 1; transform: translateY(0); }
+}
+
+.fade {
+  animation: fadeIn 0.3s ease-out;
+}
+
+@keyframes pulse {
+  0%, 100% { opacity: 1; }
+  50%      { opacity: 0.4; }
+}
+
+.pulse {
+  animation: pulse 2s infinite;
+}
+
+.ewoRow {
+  &:hover {
+    filter: brightness(0.97);
+  }
+}
