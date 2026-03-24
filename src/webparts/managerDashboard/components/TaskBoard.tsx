@@ -168,11 +168,18 @@ const TaskRow: React.FC<TaskRowProps> = ({ task, onUpdate, onEdit, onDelete, isL
       history: [...task.history, { action: 're-opened', user: currentUserInitials, ts: now(), detail: `Reason: ${reason}` }] });
     setShowUndo(false);
   };
+  const wipTimeout = React.useRef<ReturnType<typeof setTimeout> | null>(null);
+  const [localWip, setLocalWip] = React.useState(task.wipPct);
+  React.useEffect(() => { setLocalWip(task.wipPct); }, [task.wipPct]);
   const handleWip = (val: number): void => {
     if (!canEdit || task.status === 'complete') return;
     if (val >= 100) { setShowComplete(true); return; }
-    onUpdate({ ...task, wipPct: val, status: val > 0 ? 'wip' : 'not_started', hoursActual: round1(task.hoursPlanned * val / 100),
-      history: [...task.history, { action: 'progress', user: currentUserInitials, ts: now(), detail: `WIP ${val}%` }] });
+    setLocalWip(val);
+    if (wipTimeout.current) clearTimeout(wipTimeout.current);
+    wipTimeout.current = setTimeout(() => {
+      onUpdate({ ...task, wipPct: val, status: val > 0 ? 'wip' : 'not_started', hoursActual: round1(task.hoursPlanned * val / 100),
+        history: [...task.history, { action: 'progress', user: currentUserInitials, ts: now(), detail: `WIP ${val}%` }] });
+    }, 500);
   };
 
   const hrsText = task.status === 'complete' ? `${task.hoursActual}h` : task.hoursActual > 0 ? `${task.hoursActual}/${task.hoursPlanned}h` : `${task.hoursPlanned}h`;
@@ -181,7 +188,7 @@ const TaskRow: React.FC<TaskRowProps> = ({ task, onUpdate, onEdit, onDelete, isL
     <>
       {showComplete && <CompleteModal task={task} onConfirm={handleComplete} onCancel={() => setShowComplete(false)} />}
       {showUndo && <UndoModal task={task} onConfirm={handleUndo} onCancel={() => setShowUndo(false)} />}
-      <div style={{ display: 'grid', gridTemplateColumns: '4px 70px 52px 1fr 36px 50px 80px 110px', gap: 6, padding: '5px 8px', alignItems: 'center', fontSize: 12, borderBottom: `1px solid ${C.card}`, opacity: task.status === 'complete' ? 0.6 : 1, background: isInternal ? 'rgba(90,110,136,0.04)' : 'transparent' }}>
+      <div style={{ display: 'grid', gridTemplateColumns: '4px 70px 52px 1fr 36px 50px 120px 110px', gap: 6, padding: '5px 8px', alignItems: 'center', fontSize: 12, borderBottom: `1px solid ${C.card}`, opacity: task.status === 'complete' ? 0.6 : 1, background: isInternal ? 'rgba(90,110,136,0.04)' : 'transparent' }}>
         <div style={{ width: 4, height: 22, borderRadius: 2, background: isInternal ? C.dim : prioC[task.priority] || C.amberLt }} />
         <span style={{ color: isInternal ? C.muted : C.greenLt, fontWeight: 600, fontSize: 11 }}>{task.project}</span>
         <span style={{ color: C.muted, fontSize: 11 }}>{task.taskCode}</span>
@@ -199,10 +206,21 @@ const TaskRow: React.FC<TaskRowProps> = ({ task, onUpdate, onEdit, onDelete, isL
         <span style={{ fontSize: 11, color: overHrs ? C.red : '#B4B2A9', textAlign: 'center' }}>{hrsText}</span>
         <div>
           {task.status !== 'complete' && task.status !== 'rework' ? (
-            <div style={{ display: 'flex', alignItems: 'center', gap: 4 }}>
-              <input type="range" min="0" max="100" step="5" value={task.wipPct} onChange={e => handleWip(parseInt(e.target.value))} disabled={!canEdit}
-                style={{ width: 48, height: 4, accentColor: task.wipPct > 60 ? C.green : C.amber }} />
-              <span style={{ fontSize: 10, color: '#3a4a60', minWidth: 26 }}>{task.wipPct}%</span>
+            <div style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
+              <div
+                style={{ position: 'relative', width: 80, height: 20, cursor: canEdit ? 'pointer' : 'default', userSelect: 'none' }}
+                onClick={e => {
+                  if (!canEdit) return;
+                  const rect = (e.currentTarget as HTMLDivElement).getBoundingClientRect();
+                  const pct = Math.round(((e.clientX - rect.left) / rect.width) * 100 / 5) * 5;
+                  handleWip(Math.max(0, Math.min(100, pct)));
+                }}
+              >
+                <div style={{ position: 'absolute', top: 8, left: 0, width: '100%', height: 4, borderRadius: 2, background: '#3a4a60' }} />
+                <div style={{ position: 'absolute', top: 8, left: 0, width: `${localWip}%`, height: 4, borderRadius: 2, background: localWip > 60 ? C.green : C.amber, transition: 'width 0.15s ease' }} />
+                <div style={{ position: 'absolute', top: 4, left: `calc(${localWip}% - 6px)`, width: 12, height: 12, borderRadius: '50%', background: localWip > 60 ? C.green : localWip > 0 ? C.amber : '#6b7a8d', border: '2px solid #fff', boxShadow: '0 1px 3px rgba(0,0,0,0.3)', transition: 'left 0.15s ease' }} />
+              </div>
+              <span style={{ fontSize: 11, fontWeight: 600, color: localWip > 60 ? C.green : localWip > 0 ? C.amber : '#B4B2A9', minWidth: 28 }}>{localWip}%</span>
             </div>
           ) : <Badge status={task.status} wipPct={task.wipPct} reviewStatus={task.reviewStatus} />}
         </div>
@@ -662,7 +680,7 @@ const TaskBoard: React.FC<TaskBoardProps> = ({ spService, projects, userDisplayN
       </div>
 
       {/* Column headers */}
-      <div style={{ display: 'grid', gridTemplateColumns: '4px 70px 52px 1fr 36px 50px 80px 110px', gap: 6, padding: '4px 8px', fontSize: 10, fontWeight: 600, color: C.dim, letterSpacing: '0.04em', borderBottom: `1px solid ${C.border}` }}>
+      <div style={{ display: 'grid', gridTemplateColumns: '4px 70px 52px 1fr 36px 50px 120px 110px', gap: 6, padding: '4px 8px', fontSize: 10, fontWeight: 600, color: C.dim, letterSpacing: '0.04em', borderBottom: `1px solid ${C.border}` }}>
         <span></span><span>PROJECT</span><span>TASK</span><span>DESCRIPTION</span>
         <span style={{ textAlign: 'center' }}>WHO</span><span style={{ textAlign: 'center' }}>HOURS</span><span>STATUS</span><span style={{ textAlign: 'right' }}>ACTIONS</span>
       </div>
