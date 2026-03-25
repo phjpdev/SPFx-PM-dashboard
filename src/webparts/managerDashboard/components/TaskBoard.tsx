@@ -423,7 +423,7 @@ const PlanWeekPanel: React.FC<PlanWeekProps> = ({ lastWeekTasks, team, activePro
 
       <div style={{ display: 'flex', gap: 4, marginBottom: 12 }}>
         <button onClick={() => setMode('production')} style={{ padding: '6px 16px', borderRadius: 4, fontSize: 12, fontWeight: 600, border: 'none', cursor: 'pointer', background: isProd ? C.green : '#262623', color: isProd ? '#fff' : C.muted }}>Production ({prodRows.length})</button>
-        <button onClick={() => setMode('internal')} style={{ padding: '6px 16px', borderRadius: 4, fontSize: 12, fontWeight: 600, border: 'none', cursor: 'pointer', background: !isProd ? C.dim : '#262623', color: !isProd ? '#fff' : C.muted }}>Non-production ({intRows.length})</button>
+        <button onClick={() => setMode('internal')} style={{ padding: '6px 16px', borderRadius: 4, fontSize: 12, fontWeight: 600, border: 'none', cursor: 'pointer', background: !isProd ? C.dim : '#262623', color: '#fff' }}>Non-production ({intRows.length})</button>
       </div>
 
       <div style={{ display: 'grid', gridTemplateColumns: isProd ? '90px 110px 1fr 54px 60px 50px 40px 50px' : '1fr 110px 1fr 54px 60px 50px 50px', gap: 6, padding: '4px 0', fontSize: 10, fontWeight: 600, color: C.dim, letterSpacing: '0.04em' }}>
@@ -456,7 +456,7 @@ const PlanWeekPanel: React.FC<PlanWeekProps> = ({ lastWeekTasks, team, activePro
         </div>
       ))}
 
-      <button onClick={addRow} style={{ padding: '8px 0', fontSize: 12, color: isProd ? C.greenLt : '#B4B2A9', background: 'transparent', border: `1px dashed ${isProd ? C.green : C.dim}`, borderRadius: 4, cursor: 'pointer', width: '100%', marginTop: 4, textAlign: 'center' }}>+ Add {isProd ? 'production' : 'non-production'} task</button>
+      <button onClick={addRow} style={{ padding: '8px 0', fontSize: 12, fontWeight: 600, color: isProd ? C.greenLt : '#B4B2A9', background: 'transparent', border: `1px dashed ${isProd ? C.green : C.dim}`, borderRadius: 4, cursor: 'pointer', width: '100%', marginTop: 4, textAlign: 'center' }}>+ Add {isProd ? 'production' : 'non-production'} task</button>
 
       {rows.length > 0 && (
         <div style={{ background: C.bg, borderRadius: 6, padding: '10px 16px', marginTop: 12, marginBottom: 16 }}>
