@@ -43,11 +43,12 @@ export const HrsBar: React.FC<{ allowed: number; used: number }> = ({ allowed, u
   const over = used > allowed;
   const col = hrsColor(pct, over);
   if (pct === null) return <span style={{ fontFamily: 'Montserrat', fontWeight: 600, fontSize: 12, color: 'var(--t4)' }}>—</span>;
-  const rem = Math.abs(used - allowed).toFixed(1);
+  const usedR = Math.round(used * 10) / 10;
+  const rem = Math.abs(Math.round((used - allowed) * 10) / 10).toFixed(1);
   return (
     <div style={{ minWidth: 140 }}>
       <div style={{ display: 'flex', justifyContent: 'space-between', fontFamily: 'Montserrat', fontWeight: 600, fontSize: 11.5, marginBottom: 4 }}>
-        <span style={{ color: 'var(--t2)' }}>{used}<span style={{ color: 'var(--t4)', fontWeight: 600 }}> / {allowed}h</span></span>
+        <span style={{ color: 'var(--t2)' }}>{usedR}<span style={{ color: 'var(--t4)', fontWeight: 600 }}> / {allowed}h</span></span>
         <span style={{ color: col, fontWeight: over ? 700 : 600 }}>{over ? '+' : ''}{rem}h {over ? 'OVER' : 'left'}</span>
       </div>
       <div style={{ height: 6, background: pct === 0 ? '#ccc' : 'var(--s2)', borderRadius: 3, overflow: 'hidden' }}>
