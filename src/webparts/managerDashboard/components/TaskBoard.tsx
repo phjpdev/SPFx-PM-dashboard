@@ -268,7 +268,7 @@ const EditTaskModal: React.FC<EditTaskModalProps> = ({ task, team, activeProject
           <label style={{ fontSize: 11, fontWeight: 700, color: C.muted, display: 'block', marginBottom: 4 }}>PROJECT</label>
           <select value={d.project} onChange={e => set('project', e.target.value)} style={ss}>
             <option value="3E-INT">3E-INT (Non-production)</option>
-            {activeProjects.map(p => <option key={p.projNum} value={p.projNum}>{p.projNum}</option>)}
+            {activeProjects.map(p => <option key={p.projNum} value={p.projNum}>{p.projNum}{p.isEwo ? ' (EWO)' : ''}</option>)}
           </select>
         </div>
         <div>
@@ -434,7 +434,7 @@ const PlanWeekPanel: React.FC<PlanWeekProps> = ({ lastWeekTasks, team, activePro
         <div key={r.id} style={{ display: 'grid', gridTemplateColumns: isProd ? '90px 110px 1fr 54px 60px 50px 40px 50px' : '1fr 110px 1fr 54px 60px 50px 50px', gap: 6, padding: '4px 0', alignItems: 'center', borderBottom: `1px solid ${C.card}` }}>
           {isProd ? (
             <select value={r.project} onChange={e => updateRow(r.id, 'project', e.target.value)} style={ss}>
-              {activeProjects.map(p => <option key={p.projNum} value={p.projNum}>{p.projNum}</option>)}
+              {activeProjects.map(p => <option key={p.projNum} value={p.projNum}>{p.projNum}{p.isEwo ? ' (EWO)' : ''}</option>)}
             </select>
           ) : <span style={{ fontSize: 11, color: C.muted, padding: '0 6px' }}>3E-INT</span>}
           <CodeOpts codes={isProd ? PROD_TASK_CODES : NON_PROD_TASK_CODES} value={r.taskCode} onChange={v => updateRow(r.id, 'taskCode', v)} style={ss} />
@@ -514,7 +514,7 @@ const TaskBoard: React.FC<TaskBoardProps> = ({ spService, projects, userDisplayN
   const weekTasks = tasks[weekOffset] || [];
   const lastWeekTasks = tasks[weekOffset - 1] || [];
   const filtered = filterPerson === 'All' ? weekTasks : weekTasks.filter(t => t.assignee === filterPerson);
-  const activeProjects = projects.filter(p => !p.isEwo);
+  const activeProjects = projects;
   const teamCapacity = team.reduce((s, t) => s + t.prodHrsPerWeek, 0);
 
   // Load team + tasks for current and adjacent weeks
