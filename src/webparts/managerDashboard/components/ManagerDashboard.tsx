@@ -1183,6 +1183,7 @@ interface TdImportModalProps {
   projects: IProject[];
   onClose: () => void;
   onApply: (updates: Array<{ projId: string; hrsUsed: number }>) => void;
+  lastImport?: string;
 }
 
 interface TdPreviewRow {
@@ -1192,7 +1193,7 @@ interface TdPreviewRow {
   current: number;
 }
 
-const TdImportModal: React.FC<TdImportModalProps> = ({ projects, onClose, onApply }) => {
+const TdImportModal: React.FC<TdImportModalProps> = ({ projects, onClose, onApply, lastImport }) => {
   const [preview, setPreview] = React.useState<TdPreviewRow[]>([]);
   const [error, setError] = React.useState('');
   const [parsed, setParsed] = React.useState(false);
@@ -1300,6 +1301,11 @@ const TdImportModal: React.FC<TdImportModalProps> = ({ projects, onClose, onAppl
           <input type="file" accept=".xls,.xlsx,.csv" onChange={e => handleFile(e.target.files ? e.target.files[0] : null)}
             style={{ fontFamily: 'Montserrat', fontSize: 13, color: 'var(--t1)' }} />
         </div>
+        {lastImport && (
+          <div style={{ fontFamily: 'Montserrat', fontSize: 12, fontWeight: 700, color: 'var(--t2)', marginBottom: 14 }}>
+            Last import: {(() => { const d = new Date(lastImport); const days = ['Sun','Mon','Tue','Wed','Thu','Fri','Sat']; const months = ['Jan','Feb','Mar','Apr','May','Jun','Jul','Aug','Sep','Oct','Nov','Dec']; const h = d.getHours(); const ampm = h >= 12 ? 'PM' : 'AM'; const h12 = h % 12 || 12; return `${days[d.getDay()]} ${d.getDate()} ${months[d.getMonth()]}, ${h12}:${String(d.getMinutes()).padStart(2,'0')} ${ampm}`; })()}
+          </div>
+        )}
         {error && (
           <div style={{ background: 'var(--rd2)', border: '1px solid var(--rd)', borderRadius: 4, padding: '10px 14px', fontFamily: 'Montserrat', fontSize: 12.5, color: 'var(--rd)', marginBottom: 14 }}>
             {error}
@@ -1374,6 +1380,7 @@ const ManagerDashboard: React.FC<IManagerDashboardProps> = (props) => {
   const [srch, setSrch] = React.useState('');
   const [yr, setYr] = React.useState('2026');
   const [stFilt, setStFilt] = React.useState('');
+  const [showArchived, setShowArchived] = React.useState(false);
   const [sCol, setSCol] = React.useState('projNum');
   const [sDir, setSDir] = React.useState<SDir>('asc');
 
@@ -1402,6 +1409,10 @@ const ManagerDashboard: React.FC<IManagerDashboardProps> = (props) => {
 
   // ── Time Doctor
   const [tdModal, setTdModal] = React.useState(false);
+  const TD_LS_KEY = '3edge_td_last_import';
+  const [lastTdImport, setLastTdImport] = React.useState<string | null>(() => {
+    try { return localStorage.getItem(TD_LS_KEY); } catch { return null; }
+  });
 
   // ── Load data
   const loadData = React.useCallback(async () => {
@@ -1511,6 +1522,11 @@ const ManagerDashboard: React.FC<IManagerDashboardProps> = (props) => {
   const visProjects = React.useMemo(() => {
     const list = projects.filter(p => {
       if (p.isEwo) return false; // EWOs shown as sub-rows
+      if (showArchived) {
+        if (p.status !== 'Archive') return false;
+      } else {
+        if (p.status === 'Archive') return false;
+      }
       if (yr && yr !== 'all' && String(p.year) !== yr) return false;
       if (stFilt && p.status !== stFilt) return false;
       if (srch) {
@@ -1520,7 +1536,7 @@ const ManagerDashboard: React.FC<IManagerDashboardProps> = (props) => {
       return true;
     });
     return sortList(list, sCol, sDir);
-  }, [projects, yr, stFilt, srch, sCol, sDir]);
+  }, [projects, yr, stFilt, srch, sCol, sDir, showArchived]);
 
   // ── RFI used per project
   const rfiCountByProj = React.useMemo(() => {
@@ -1631,6 +1647,21 @@ const ManagerDashboard: React.FC<IManagerDashboardProps> = (props) => {
     }
   };
 
+  const toggleArchive = async (proj: IProject): Promise<void> => {
+    const newStatus = proj.status === 'Archive' ? 'Active' : 'Archive';
+    const updated = { ...proj, status: newStatus };
+    try {
+      if (!isLocal() && proj.spId) {
+        await spService.current.updateProject(proj.spId, updated);
+      }
+      setProjects(prev => prev.map(p => p.id === proj.id ? updated : p));
+      toast(newStatus === 'Archive' ? 'Project archived.' : 'Project restored.');
+    } catch (e) {
+      const msg = (e instanceof Error) ? e.message : String(e);
+      toast('Failed: ' + msg, 'error');
+    }
+  };
+
   const deleteProject = async (proj: IProject): Promise<void> => {
     if (isLocal() || !proj.spId) {
       setProjects(prev => prev.filter(p => p.id !== proj.id));
@@ -1734,6 +1765,9 @@ const ManagerDashboard: React.FC<IManagerDashboardProps> = (props) => {
         toast('Failed to update ' + p.projNum + ': ' + msg, 'error');
       }
     }
+    const ts = new Date().toISOString();
+    try { localStorage.setItem(TD_LS_KEY, ts); } catch { /* noop */ }
+    setLastTdImport(ts);
     toast('Time Doctor import: ' + success + ' project' + (success !== 1 ? 's' : '') + ' updated.');
   };
 
@@ -1815,14 +1849,21 @@ const ManagerDashboard: React.FC<IManagerDashboardProps> = (props) => {
 
         {/* Time Doctor (manager only) */}
         {mod === 'projects' && isManager && (
-          <button onClick={() => setTdModal(true)} style={{
-            fontFamily: 'Montserrat', fontWeight: 600, fontSize: 11, letterSpacing: '.1em',
-            textTransform: 'uppercase', padding: '5px 14px', borderRadius: 4, cursor: 'pointer',
-            background: 'rgba(212,136,10,0.14)', border: '1px solid var(--am)', color: 'var(--am)',
-            marginRight: 8, whiteSpace: 'nowrap'
-          }}>
-            Time Doctor Import
-          </button>
+          <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginRight: 8 }}>
+            {/* {lastTdImport && (
+              <span style={{ fontFamily: 'Montserrat', fontSize: 10, color: 'var(--t4)', whiteSpace: 'nowrap' }}>
+                Last import: {(() => { const d = new Date(lastTdImport); const days = ['Sun','Mon','Tue','Wed','Thu','Fri','Sat']; const months = ['Jan','Feb','Mar','Apr','May','Jun','Jul','Aug','Sep','Oct','Nov','Dec']; const h = d.getHours(); const ampm = h >= 12 ? 'PM' : 'AM'; const h12 = h % 12 || 12; return `${days[d.getDay()]} ${d.getDate()} ${months[d.getMonth()]}, ${h12}:${String(d.getMinutes()).padStart(2,'0')} ${ampm}`; })()}
+              </span>
+            )} */}
+            <button onClick={() => setTdModal(true)} style={{
+              fontFamily: 'Montserrat', fontWeight: 600, fontSize: 11, letterSpacing: '.1em',
+              textTransform: 'uppercase', padding: '5px 14px', borderRadius: 4, cursor: 'pointer',
+              background: 'rgba(212,136,10,0.14)', border: '1px solid var(--am)', color: 'var(--am)',
+              whiteSpace: 'nowrap'
+            }}>
+              Time Doctor Import
+            </button>
+          </div>
         )}
 
         {/* SP Status indicator */}
@@ -1909,6 +1950,16 @@ const ManagerDashboard: React.FC<IManagerDashboardProps> = (props) => {
                 <option value="">All Statuses</option>
                 {PROJ_STATUSES.map(s => <option key={s} value={s}>{s}</option>)}
               </select>
+              <button onClick={() => setShowArchived(!showArchived)} style={{
+                fontFamily: 'Montserrat', fontWeight: 700, fontSize: 11, letterSpacing: '.06em',
+                textTransform: 'uppercase', padding: '7px 14px', borderRadius: 6, cursor: 'pointer',
+                background: showArchived ? 'var(--am)' : 'transparent',
+                color: showArchived ? '#fff' : 'var(--t3)',
+                border: `1px solid ${showArchived ? 'var(--am)' : 'var(--bd)'}`,
+                transition: 'all .15s'
+              }}>
+                {showArchived ? 'Show Active' : 'Archived'}
+              </button>
               <div style={{ flex: 1 }} />
               <button onClick={() => generateAllProjectsPdf(visProjects, rfis)} style={{
                 fontFamily: 'Montserrat', fontWeight: 700, fontSize: 12, letterSpacing: '.08em',
@@ -2003,6 +2054,7 @@ const ManagerDashboard: React.FC<IManagerDashboardProps> = (props) => {
                               <div style={{ display: 'flex', flexDirection: 'column', gap: 4, alignItems: 'flex-start' }}>
                                 <IBtn onClick={() => openProjDetail(p)} title="View details">View</IBtn>
                                 {isManager && <IBtn onClick={() => openProjForm(p)} title="Edit project">Edit</IBtn>}
+                                {isManager && <IBtn onClick={() => toggleArchive(p)} title={p.status === 'Archive' ? 'Restore project' : 'Archive project'}>{p.status === 'Archive' ? 'Restore' : 'Archive'}</IBtn>}
                               </div>
                             </td>
                           </tr>
@@ -2453,6 +2505,7 @@ const ManagerDashboard: React.FC<IManagerDashboardProps> = (props) => {
           projects={projects}
           onClose={() => setTdModal(false)}
           onApply={(updates) => { applyTdUpdates(updates).catch(() => undefined); }}
+          lastImport={lastTdImport || undefined}
         />
       )}
 
