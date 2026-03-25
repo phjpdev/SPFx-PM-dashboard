@@ -315,7 +315,7 @@ const EditTaskModal: React.FC<EditTaskModalProps> = ({ task, team, activeProject
 // ── Plan Week Panel ──────────────────────────────────────────
 interface PlanRow {
   id: string; project: string; taskCode: string; description: string;
-  assignee: string; day: number; hoursPlanned: number; priority: string; isInternal: boolean;
+  assignee: string; day: number; hoursPlanned: number; priority: string; isInternal: boolean; wipPct?: number;
 }
 
 interface PlanWeekProps {
@@ -351,12 +351,12 @@ const PlanWeekPanel: React.FC<PlanWeekProps> = ({ lastWeekTasks, team, activePro
 
   const carryOne = (task: ITask): void => {
     const rem = round1(task.hoursPlanned * (100 - task.wipPct) / 100);
-    setRows(p => [...p, { id: `carry-${task.id}`, project: task.project, taskCode: task.taskCode, description: `${task.description} (carried fwd)`, assignee: task.assignee, day: 0, hoursPlanned: Math.max(rem, 1), priority: task.priority, isInternal: false }]);
+    setRows(p => [...p, { id: `carry-${task.id}`, project: task.project, taskCode: task.taskCode, description: `${task.description} (carried fwd)`, assignee: task.assignee, day: 0, hoursPlanned: Math.max(rem, 1), priority: task.priority, isInternal: false, wipPct: task.wipPct }]);
   };
   const carryAll = (): void => {
     const newRows = unfinished.filter(t => !rows.some(r => r.description.includes(t.description))).map(t => {
       const rem = round1(t.hoursPlanned * (100 - t.wipPct) / 100);
-      return { id: `carry-${t.id}`, project: t.project, taskCode: t.taskCode, description: `${t.description} (carried fwd)`, assignee: t.assignee, day: 0, hoursPlanned: Math.max(rem, 1), priority: t.priority, isInternal: false };
+      return { id: `carry-${t.id}`, project: t.project, taskCode: t.taskCode, description: `${t.description} (carried fwd)`, assignee: t.assignee, day: 0, hoursPlanned: Math.max(rem, 1), priority: t.priority, isInternal: false, wipPct: t.wipPct };
     });
     setRows(p => [...p, ...newRows]);
   };
@@ -364,12 +364,15 @@ const PlanWeekPanel: React.FC<PlanWeekProps> = ({ lastWeekTasks, team, activePro
   const submit = (): void => {
     const wsd = weekKey(monday);
     const valid = rows.filter(r => r.description.trim());
-    const tasks: Omit<ITask, 'id' | 'spId'>[] = valid.map(r => ({
-      project: r.project, taskCode: r.taskCode, description: r.description, assignee: r.assignee, day: r.day, weekStartDate: wsd,
-      hoursPlanned: r.hoursPlanned, hoursActual: 0, wipPct: 0, status: 'not_started', priority: r.priority,
-      completedBy: '', completedAt: '', completionNote: '', reviewedBy: '', reviewStatus: '',
-      history: [{ action: 'created', user: currentUserInitials, ts: now(), detail: `${r.hoursPlanned}h planned — weekly planning` }]
-    }));
+    const tasks: Omit<ITask, 'id' | 'spId'>[] = valid.map(r => {
+      const carried = r.wipPct !== undefined && r.wipPct > 0;
+      return {
+        project: r.project, taskCode: r.taskCode, description: r.description, assignee: r.assignee, day: r.day, weekStartDate: wsd,
+        hoursPlanned: r.hoursPlanned, hoursActual: carried ? round1(r.hoursPlanned * r.wipPct! / 100) : 0, wipPct: carried ? r.wipPct! : 0, status: carried ? 'wip' : 'not_started', priority: r.priority,
+        completedBy: '', completedAt: '', completionNote: '', reviewedBy: '', reviewStatus: '',
+        history: [{ action: 'created', user: currentUserInitials, ts: now(), detail: `${r.hoursPlanned}h planned — weekly planning${carried ? ` (carried fwd at ${r.wipPct}%)` : ''}` }]
+      };
+    });
     onAddTasks(tasks);
   };
 
