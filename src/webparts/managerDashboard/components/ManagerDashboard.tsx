@@ -1178,6 +1178,19 @@ const RfiDetail: React.FC<RfiDetailProps> = ({ rfi, proj, isManager, siteUrl, sp
   );
 };
 
+const fmtTdImport = (raw: string): string => {
+  const [iso, ...nameParts] = raw.split('|');
+  const who = nameParts.join('|') || '';
+  const d = new Date(iso);
+  if (isNaN(d.getTime())) return raw;
+  const fmt = (tz: string, label: string): string => {
+    const opts: Intl.DateTimeFormatOptions = { timeZone: tz, weekday: 'short', day: 'numeric', month: 'short', hour: 'numeric', minute: '2-digit', hour12: true };
+    return `${label} ${new Intl.DateTimeFormat('en-AU', opts).format(d)}`;
+  };
+  const ts = fmt('Australia/Sydney', 'AUS');
+  return who ? `${ts} by ${who}` : ts;
+};
+
 // ── Time Doctor Import Modal ───────────────────────────────────────────────────
 interface TdImportModalProps {
   projects: IProject[];
@@ -1303,7 +1316,7 @@ const TdImportModal: React.FC<TdImportModalProps> = ({ projects, onClose, onAppl
         </div>
         {lastImport && (
           <div style={{ fontFamily: 'Montserrat', fontSize: 12, fontWeight: 700, color: 'var(--t2)', marginBottom: 14 }}>
-            Last import: {(() => { const d = new Date(lastImport); const days = ['Sun','Mon','Tue','Wed','Thu','Fri','Sat']; const months = ['Jan','Feb','Mar','Apr','May','Jun','Jul','Aug','Sep','Oct','Nov','Dec']; const h = d.getHours(); const ampm = h >= 12 ? 'PM' : 'AM'; const h12 = h % 12 || 12; return `${days[d.getDay()]} ${d.getDate()} ${months[d.getMonth()]}, ${h12}:${String(d.getMinutes()).padStart(2,'0')} ${ampm}`; })()}
+            Last import: {fmtTdImport(lastImport)}
           </div>
         )}
         {error && (
@@ -1409,10 +1422,7 @@ const ManagerDashboard: React.FC<IManagerDashboardProps> = (props) => {
 
   // ── Time Doctor
   const [tdModal, setTdModal] = React.useState(false);
-  const TD_LS_KEY = '3edge_td_last_import';
-  const [lastTdImport, setLastTdImport] = React.useState<string | null>(() => {
-    try { return localStorage.getItem(TD_LS_KEY); } catch { return null; }
-  });
+  const [lastTdImport, setLastTdImport] = React.useState<string | null>(null);
 
   // ── Load data
   const loadData = React.useCallback(async () => {
@@ -1426,6 +1436,8 @@ const ManagerDashboard: React.FC<IManagerDashboardProps> = (props) => {
       setProjects(p);
       setRfis(r);
       setSpMode('live');
+      // Load last TD import timestamp
+      spService.current.getSetting('lastTdImport').then(v => { if (v) setLastTdImport(v); }).catch(() => undefined);
     } catch (e) {
       const msg = (e instanceof Error) ? e.message : String(e);
       toast('SharePoint unavailable — running in local mode. (' + msg + ')', 'error');
@@ -1765,9 +1777,9 @@ const ManagerDashboard: React.FC<IManagerDashboardProps> = (props) => {
         toast('Failed to update ' + p.projNum + ': ' + msg, 'error');
       }
     }
-    const ts = new Date().toISOString();
-    try { localStorage.setItem(TD_LS_KEY, ts); } catch { /* noop */ }
-    setLastTdImport(ts);
+    const tsVal = new Date().toISOString() + '|' + props.userDisplayName;
+    spService.current.setSetting('lastTdImport', tsVal).catch(() => undefined);
+    setLastTdImport(tsVal);
     toast('Time Doctor import: ' + success + ' project' + (success !== 1 ? 's' : '') + ' updated.');
   };
 

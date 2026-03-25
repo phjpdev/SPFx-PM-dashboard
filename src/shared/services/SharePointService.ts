@@ -6,6 +6,7 @@ const LIST_PROJ = '3Edge_Projects';
 const LIST_RFI = '3Edge_RFIs';
 const LIST_TASKS = 'WeeklyTasks';
 const LIST_TEAM = 'TeamMembers';
+const LIST_SETTINGS = '3Edge_Settings';
 
 export class SharePointService {
   private _siteUrl: string;
@@ -455,5 +456,27 @@ export class SharePointService {
 
   public async deleteTask(spId: number): Promise<void> {
     await this.spDelete(`/_api/web/lists/getbytitle('${LIST_TASKS}')/items(${spId})`);
+  }
+
+  // ── Settings (key-value store) ─────────────────────────────
+
+  public async getSetting(key: string): Promise<string | undefined> {
+    try {
+      const d = await this.spGet(`/_api/web/lists/getbytitle('${LIST_SETTINGS}')/items?$filter=Title eq '${key}'&$top=1`);
+      const items = d.value || [];
+      return items.length > 0 ? (items[0].Value || '') : undefined;
+    } catch { return undefined; }
+  }
+
+  public async setSetting(key: string, value: string): Promise<void> {
+    try {
+      const d = await this.spGet(`/_api/web/lists/getbytitle('${LIST_SETTINGS}')/items?$filter=Title eq '${key}'&$top=1`);
+      const items = d.value || [];
+      if (items.length > 0) {
+        await this.spMerge(`/_api/web/lists/getbytitle('${LIST_SETTINGS}')/items(${items[0].Id})`, { Value: value });
+      } else {
+        await this.spPost(`/_api/web/lists/getbytitle('${LIST_SETTINGS}')/items`, { Title: key, Value: value });
+      }
+    } catch { /* fail silently — non-critical */ }
   }
 }
