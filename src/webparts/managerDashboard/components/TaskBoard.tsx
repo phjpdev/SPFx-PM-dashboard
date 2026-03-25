@@ -154,7 +154,7 @@ const TaskRow: React.FC<TaskRowProps> = ({ task, onUpdate, onEdit, onDelete, isL
   const [showHistory, setShowHistory] = React.useState(false);
   const canEdit = !isLocked || isManager;
   const isOwner = task.assignee === currentUserInitials;
-  const canComplete = canEdit && (isOwner || isManager) && task.status !== 'complete';
+  const canComplete = canEdit && task.status !== 'complete';
   const canUndo = canEdit && (isOwner || isManager) && task.status === 'complete' && task.reviewStatus !== 'accepted';
   const overHrs = task.hoursActual > task.hoursPlanned * 1.2;
 
@@ -227,11 +227,11 @@ const TaskRow: React.FC<TaskRowProps> = ({ task, onUpdate, onEdit, onDelete, isL
         <div style={{ display: 'flex', flexDirection: 'column', gap: 3, alignItems: 'flex-end' }}>
           <div style={{ display: 'flex', gap: 3 }}>
             {canComplete && <button onClick={() => setShowComplete(true)} style={{ padding: '2px 0', width: 42, borderRadius: 3, border: 'none', background: C.green, color: '#fff', fontSize: 10, fontWeight: 700, cursor: 'pointer', textAlign: 'center' }}>Done</button>}
-            {canUndo && <button onClick={() => setShowUndo(true)} style={{ padding: '2px 0', width: 42, borderRadius: 3, border: 'none', background: C.amber, color: '#fff', fontSize: 10, fontWeight: 700, cursor: 'pointer', textAlign: 'center' }}>Undo</button>}
-            {canEdit && <button onClick={() => onEdit(task)} style={{ padding: '2px 0', width: 42, borderRadius: 3, border: 'none', background: C.purple, color: '#fff', fontSize: 10, fontWeight: 700, cursor: 'pointer', textAlign: 'center' }}>Edit</button>}
+            {isManager && canUndo && <button onClick={() => setShowUndo(true)} style={{ padding: '2px 0', width: 42, borderRadius: 3, border: 'none', background: C.amber, color: '#fff', fontSize: 10, fontWeight: 700, cursor: 'pointer', textAlign: 'center' }}>Undo</button>}
+            {isManager && canEdit && <button onClick={() => onEdit(task)} style={{ padding: '2px 0', width: 42, borderRadius: 3, border: 'none', background: C.purple, color: '#fff', fontSize: 10, fontWeight: 700, cursor: 'pointer', textAlign: 'center' }}>Edit</button>}
           </div>
           <div style={{ display: 'flex', gap: 3 }}>
-            {canEdit && <button onClick={() => { if (confirm('Delete task "' + task.description + '"?')) onDelete(task); }} style={{ padding: '2px 0', width: 42, borderRadius: 3, border: `1px solid ${C.redDk}`, background: 'transparent', color: C.redDk, fontSize: 10, fontWeight: 700, cursor: 'pointer', textAlign: 'center' }}>Del</button>}
+            {isManager && canEdit && <button onClick={() => { if (confirm('Delete task "' + task.description + '"?')) onDelete(task); }} style={{ padding: '2px 0', width: 42, borderRadius: 3, border: `1px solid ${C.redDk}`, background: 'transparent', color: C.redDk, fontSize: 10, fontWeight: 700, cursor: 'pointer', textAlign: 'center' }}>Del</button>}
             <button onClick={() => setShowHistory(!showHistory)} style={{ padding: '2px 0', width: 42, borderRadius: 3, border: `1px solid ${C.muted}`, background: showHistory ? C.muted : 'transparent', color: showHistory ? '#fff' : C.muted, fontSize: 10, fontWeight: 700, cursor: 'pointer', textAlign: 'center' }}>Log</button>
           </div>
         </div>
