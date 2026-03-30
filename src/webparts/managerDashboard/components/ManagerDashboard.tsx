@@ -1196,6 +1196,7 @@ interface TdImportModalProps {
   projects: IProject[];
   onClose: () => void;
   onApply: (updates: Array<{ projId: string; hrsUsed: number }>) => void;
+  onResetHours: () => void;
   lastImport?: string;
 }
 
@@ -1206,7 +1207,7 @@ interface TdPreviewRow {
   current: number;
 }
 
-const TdImportModal: React.FC<TdImportModalProps> = ({ projects, onClose, onApply, lastImport }) => {
+const TdImportModal: React.FC<TdImportModalProps> = ({ projects, onClose, onApply, onResetHours, lastImport }) => {
   const [preview, setPreview] = React.useState<TdPreviewRow[]>([]);
   const [error, setError] = React.useState('');
   const [parsed, setParsed] = React.useState(false);
@@ -1363,7 +1364,8 @@ const TdImportModal: React.FC<TdImportModalProps> = ({ projects, onClose, onAppl
           </div>
         )}
         {!parsed && (
-          <div style={{ display: 'flex', justifyContent: 'flex-end', marginTop: 8 }}>
+          <div style={{ display: 'flex', justifyContent: 'flex-end', gap: 10, marginTop: 8 }}>
+            <button onClick={() => { if (confirm('Reset ALL project hours to 0? This cannot be undone.')) onResetHours(); }} style={{ fontFamily: 'Montserrat', fontSize: 12.5, padding: '9px 18px', background: 'var(--rd)', border: 'none', color: '#fff', borderRadius: 7, cursor: 'pointer', fontWeight: 700 }}>Reset All Hours</button>
             <button onClick={onClose} style={{ fontFamily: 'Montserrat', fontSize: 12.5, padding: '9px 18px', background: 'transparent', border: '1px solid var(--bd)', color: 'var(--t2)', borderRadius: 7, cursor: 'pointer' }}>Close</button>
           </div>
         )}
@@ -1781,6 +1783,23 @@ const ManagerDashboard: React.FC<IManagerDashboardProps> = (props) => {
     spService.current.setSetting('lastTdImport', tsVal).catch(() => undefined);
     setLastTdImport(tsVal);
     toast('Time Doctor import: ' + success + ' project' + (success !== 1 ? 's' : '') + ' updated.');
+  };
+
+  const resetAllHours = async (): Promise<void> => {
+    setTdModal(false);
+    let success = 0;
+    for (const p of projects) {
+      if (!p.spId || p.hrsUsed === 0) continue;
+      try {
+        const updated: IProject = { ...p, hrsUsed: 0 };
+        await spService.current.updateProject(p.spId, updated);
+        setProjects(prev => prev.map(x => x.id === p.id ? updated : x));
+        success++;
+      } catch (e) {
+        toast('Failed to reset ' + p.projNum + ': ' + ((e instanceof Error) ? e.message : String(e)), 'error');
+      }
+    }
+    toast('Reset hours: ' + success + ' project' + (success !== 1 ? 's' : '') + ' set to 0.');
   };
 
   // ── Years for filter
@@ -2517,6 +2536,7 @@ const ManagerDashboard: React.FC<IManagerDashboardProps> = (props) => {
           projects={projects}
           onClose={() => setTdModal(false)}
           onApply={(updates) => { applyTdUpdates(updates).catch(() => undefined); }}
+          onResetHours={() => { resetAllHours().catch(() => undefined); }}
           lastImport={lastTdImport || undefined}
         />
       )}
