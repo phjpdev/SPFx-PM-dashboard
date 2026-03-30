@@ -52,22 +52,24 @@ export const PROD_TASK_CODES = [
     { id: '01c', label: 'General Notes' }, { id: '01d', label: 'Tekla Model Setup' },
     { id: '01e', label: 'Client Meetings' }, { id: '01f', label: 'RFI / TQ / CQ' },
     { id: '01g', label: 'EWO-00 / CCN' }, { id: '01h', label: 'Progress Reports' },
+    { id: '01j', label: 'PM / Document Control' },
   ]},
   { group: '02 — Grid', codes: [{ id: '02a', label: 'Grid' }, { id: '02b', label: 'Grid Check' }] },
-  { group: '03 — Stick Model', codes: [{ id: '03a', label: 'Stick Model' }, { id: '03b', label: 'Stick Model Check' }] },
+  { group: '03 — Stick Model', codes: [
+    { id: '03a', label: 'Stick Model / Portal Frame Set Up' }, { id: '03b', label: 'Concrete Modelling' },
+    { id: '03c', label: 'Stick Model / Portal Frame Check' },
+  ]},
   { group: '04 — Connections', codes: [
-    { id: '04a', label: 'Macros / Custom Components' }, { id: '04b', label: 'Connection Application' }, { id: '04c', label: 'Connection Check' },
+    { id: '04a', label: 'Macros / Custom Components' }, { id: '04b', label: 'Connection Application' },
+    { id: '04c', label: 'Concrete Re-Bar Connection' }, { id: '04d', label: 'Connection Check' },
   ]},
   { group: '05 — Drawings', codes: [
     { id: '05a', label: 'Drawing Setup / Creation' }, { id: '05b', label: 'Assembly Editing' },
-    { id: '05c', label: 'GA Editing' }, { id: '05d', label: 'Part Editing' },
-    { id: '05e', label: 'Drawing Checking' }, { id: '05f', label: 'Back Drafting' },
+    { id: '05c', label: 'Concrete Editing' }, { id: '05d', label: 'GA Editing' },
+    { id: '05e', label: 'Part Editing' }, { id: '05f', label: 'Drawing Checking' },
+    { id: '05g', label: 'Back Drafting / Rework' },
   ]},
   { group: '06 — Model Review', codes: [{ id: '06a', label: 'Model Clean Up' }, { id: '06b', label: 'High Level Review' }] },
-  { group: '07 — Submittals', codes: [
-    { id: '07a', label: 'ABM Submittal' }, { id: '07b', label: 'IFA Submittal' },
-    { id: '07c', label: 'IFC Submittal' }, { id: '07d', label: 'BFA Review' }, { id: '07e', label: 'BFA Execution' },
-  ]},
 ];
 
 export const NON_PROD_TASK_CODES = [
