@@ -70,6 +70,11 @@ export const PROD_TASK_CODES = [
     { id: '05g', label: 'Back Drafting / Rework' },
   ]},
   { group: '06 — Model Review', codes: [{ id: '06a', label: 'Model Clean Up' }, { id: '06b', label: 'High Level Review' }] },
+  { group: '07 — Submittals', codes: [
+    { id: '07a', label: 'ABM Submittal' }, { id: '07b', label: 'IFA Submittal' },
+    { id: '07c', label: 'IFC Submittal' }, { id: '07d', label: 'BFA Review' }, { id: '07e', label: 'BFA Execution' },
+  ]},
+  { group: '08 — QA Internal Review', codes: [{ id: '08a', label: 'QA Internal Review' }] },
 ];
 
 export const NON_PROD_TASK_CODES = [
