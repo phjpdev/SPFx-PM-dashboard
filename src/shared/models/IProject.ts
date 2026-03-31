@@ -24,6 +24,10 @@ export interface IProject {
   teamLead: string;
   teamMembers: string;
   notes: string;
+  invNumber: string;
+  invDate: string;
+  invSent: boolean;
+  invPaid: boolean;
   isEwo: boolean;
   ewoNum: string;
   parentId: string | null;
