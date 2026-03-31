@@ -1,3 +1,9 @@
+export interface IInvoice {
+  invNumber: string;
+  invDate: string;
+  invPaid: boolean;
+}
+
 export interface IProject {
   id: string;
   spId?: number;
@@ -24,10 +30,7 @@ export interface IProject {
   teamLead: string;
   teamMembers: string;
   notes: string;
-  invNumber: string;
-  invDate: string;
-  invSent: boolean;
-  invPaid: boolean;
+  invoices: IInvoice[];
   isEwo: boolean;
   ewoNum: string;
   parentId: string | null;
