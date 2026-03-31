@@ -67,7 +67,7 @@ const emptyProj = (): IProject => ({
   id: '', spId: undefined, projNum: '', name: '', discipline: 'Steel', status: 'Active', year: new Date().getFullYear(),
   hrsAllowed: 0, hrsUsed: 0, rfisAllowed: 0, quoteNum: '', contact: '', company: '',
   email: '', mobile: '', clientNum: '', clientp0: '', startDate: '', finishDate: '', ifaDate: '', ifcDate: '',
-  detailers: '', teamLead: '', teamMembers: '', notes: '', invNumber: '', invDate: '', invSent: false, invPaid: false, isEwo: false, ewoNum: '', parentId: null
+  detailers: '', teamLead: '', teamMembers: '', notes: '', invoices: [], isEwo: false, ewoNum: '', parentId: null
 });
 
 const emptyRfi = (): IRfi => ({
@@ -572,25 +572,25 @@ const ProjForm: React.FC<ProjFormProps> = ({ initial, isNew, projects, onSave, o
         <textarea style={{ ...inp, minHeight: 70, resize: 'vertical' }} value={d.notes} onChange={e => set('notes', e.target.value)} placeholder="Add notes..." />
       </FF>
 
-      <SDiv label="Invoice" />
-      <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '14px 18px' }}>
-        <FF label="Invoice Number">
-          <input style={inp} value={d.invNumber} onChange={e => set('invNumber', e.target.value)} placeholder="INV-001" />
-        </FF>
-        <FF label="Invoice Date">
-          <input style={inp} type="date" value={d.invDate} onChange={e => set('invDate', e.target.value)} />
-        </FF>
-      </div>
-      <div style={{ display: 'flex', gap: 24, marginTop: 10 }}>
-        <label style={{ display: 'flex', alignItems: 'center', gap: 8, fontFamily: 'Montserrat', fontSize: 12, fontWeight: 600, color: 'var(--t2)', cursor: 'pointer' }}>
-          <input type="checkbox" checked={!!d.invSent} onChange={e => set('invSent', e.target.checked)} style={{ width: 16, height: 16, cursor: 'pointer' }} />
-          Sent
-        </label>
-        <label style={{ display: 'flex', alignItems: 'center', gap: 8, fontFamily: 'Montserrat', fontSize: 12, fontWeight: 600, color: 'var(--t2)', cursor: 'pointer' }}>
-          <input type="checkbox" checked={!!d.invPaid} onChange={e => set('invPaid', e.target.checked)} style={{ width: 16, height: 16, cursor: 'pointer' }} />
-          Paid
-        </label>
-      </div>
+      <SDiv label="Invoices" />
+      {(d.invoices.length > 0 ? d.invoices : []).map((inv, idx) => (
+        <div key={idx} style={{ display: 'grid', gridTemplateColumns: '1fr 1fr auto auto', gap: '8px', alignItems: 'end', marginBottom: 8 }}>
+          <FF label={idx === 0 ? 'Invoice Number' : ''}>
+            <input style={inp} value={inv.invNumber} onChange={e => { const invs = [...d.invoices]; invs[idx] = { ...invs[idx], invNumber: e.target.value }; set('invoices', invs); }} placeholder="INV-001" />
+          </FF>
+          <FF label={idx === 0 ? 'Invoice Date' : ''}>
+            <input style={inp} type="date" value={inv.invDate} onChange={e => { const invs = [...d.invoices]; invs[idx] = { ...invs[idx], invDate: e.target.value }; set('invoices', invs); }} />
+          </FF>
+          <label style={{ display: 'flex', alignItems: 'center', gap: 6, fontFamily: 'Montserrat', fontSize: 11, fontWeight: 600, color: 'var(--t2)', cursor: 'pointer', paddingBottom: 2 }}>
+            <input type="checkbox" checked={!!inv.invPaid} onChange={e => { const invs = [...d.invoices]; invs[idx] = { ...invs[idx], invPaid: e.target.checked }; set('invoices', invs); }} style={{ width: 15, height: 15, cursor: 'pointer' }} />
+            Paid
+          </label>
+          <button onClick={() => { const invs = d.invoices.filter((_, i) => i !== idx); set('invoices', invs); }} style={{ background: 'transparent', border: '1px solid var(--rd)', color: 'var(--rd)', borderRadius: 4, width: 26, height: 26, fontSize: 13, cursor: 'pointer', fontWeight: 700 }}>×</button>
+        </div>
+      ))}
+      {d.invoices.length < 4 && (
+        <button onClick={() => set('invoices', [...d.invoices, { invNumber: '', invDate: '', invPaid: false }])} style={{ fontFamily: 'Montserrat', fontSize: 11, fontWeight: 600, padding: '6px 14px', background: 'transparent', border: '1px dashed var(--bd)', color: 'var(--t3)', borderRadius: 5, cursor: 'pointer', marginTop: 4 }}>+ Add Invoice</button>
+      )}
 
       {valError && <div style={{ color: 'var(--rd)', fontFamily: 'Montserrat', fontSize: 12.5, marginTop: 12, fontWeight: 600 }}>{valError}</div>}
       {dupError && <div style={{ color: 'var(--am)', fontFamily: 'Montserrat', fontSize: 12.5, marginTop: 12, fontWeight: 600 }}>{dupError}</div>}

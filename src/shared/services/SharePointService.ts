@@ -157,10 +157,7 @@ export class SharePointService {
       teamLead: i.teamLead || '',
       teamMembers: i.teamMembers || '',
       notes: i.notes || '',
-      invNumber: i.invNumber || '',
-      invDate: this.parseDate(i.invDate),
-      invSent: i.invSent || false,
-      invPaid: i.invPaid || false,
+      invoices: (() => { try { return JSON.parse(i.invoicesJson || '[]'); } catch { return []; } })(),
       isEwo: i.isEwo || false,
       ewoNum: i.ewoNum || '',
       parentId: i.parentId || null
@@ -193,10 +190,7 @@ export class SharePointService {
       teamLead: d.teamLead || '',
       teamMembers: d.teamMembers || '',
       notes: d.notes || '',
-      invNumber: d.invNumber || '',
-      invDate: d.invDate ? d.invDate : null,
-      invSent: d.invSent === true || (d.invSent as unknown as string) === 'true',
-      invPaid: d.invPaid === true || (d.invPaid as unknown as string) === 'true',
+      invoicesJson: JSON.stringify(d.invoices || []),
       isEwo: d.isEwo === true || (d.isEwo as unknown as string) === 'true',
       ewoNum: d.ewoNum || '',
       parentId: d.parentId || null

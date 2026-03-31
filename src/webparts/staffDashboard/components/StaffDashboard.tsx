@@ -18,7 +18,7 @@ const BLANK_PROJ = (): IProject => ({
   id: '', projNum: '', name: '', discipline: '', status: 'Active', year: new Date().getFullYear(),
   hrsAllowed: 0, hrsUsed: 0, rfisAllowed: 0, quoteNum: '', contact: '', company: '',
   email: '', mobile: '', clientNum: '', clientp0: '', startDate: '', finishDate: '', ifaDate: '',
-  ifcDate: '', detailers: '', teamLead: '', teamMembers: '', notes: '', invNumber: '', invDate: '', invSent: false, invPaid: false, isEwo: false, ewoNum: '', parentId: null
+  ifcDate: '', detailers: '', teamLead: '', teamMembers: '', notes: '', invoices: [], isEwo: false, ewoNum: '', parentId: null
 });
 
 const BLANK_RFI = (): IRfi => ({
