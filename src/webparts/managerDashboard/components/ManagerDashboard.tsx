@@ -67,7 +67,7 @@ const emptyProj = (): IProject => ({
   id: '', spId: undefined, projNum: '', name: '', discipline: 'Steel', status: 'Active', year: new Date().getFullYear(),
   hrsAllowed: 0, hrsUsed: 0, rfisAllowed: 0, quoteNum: '', contact: '', company: '',
   email: '', mobile: '', clientNum: '', clientp0: '', startDate: '', finishDate: '', ifaDate: '', ifcDate: '',
-  detailers: '', teamLead: '', teamMembers: '', notes: '', isEwo: false, ewoNum: '', parentId: null
+  detailers: '', teamLead: '', teamMembers: '', notes: '', invNumber: '', invDate: '', invSent: false, invPaid: false, isEwo: false, ewoNum: '', parentId: null
 });
 
 const emptyRfi = (): IRfi => ({
@@ -565,6 +565,31 @@ const ProjForm: React.FC<ProjFormProps> = ({ initial, isNew, projects, onSave, o
         <FF label="RFIs Allowed">
           <input style={inp} type="number" value={d.rfisAllowed} onChange={e => set('rfisAllowed', Number(e.target.value))} />
         </FF>
+      </div>
+
+      <SDiv label="Notes" />
+      <FF label="Project Notes">
+        <textarea style={{ ...inp, minHeight: 70, resize: 'vertical' }} value={d.notes} onChange={e => set('notes', e.target.value)} placeholder="Add notes..." />
+      </FF>
+
+      <SDiv label="Invoice" />
+      <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '14px 18px' }}>
+        <FF label="Invoice Number">
+          <input style={inp} value={d.invNumber} onChange={e => set('invNumber', e.target.value)} placeholder="INV-001" />
+        </FF>
+        <FF label="Invoice Date">
+          <input style={inp} type="date" value={d.invDate} onChange={e => set('invDate', e.target.value)} />
+        </FF>
+      </div>
+      <div style={{ display: 'flex', gap: 24, marginTop: 10 }}>
+        <label style={{ display: 'flex', alignItems: 'center', gap: 8, fontFamily: 'Montserrat', fontSize: 12, fontWeight: 600, color: 'var(--t2)', cursor: 'pointer' }}>
+          <input type="checkbox" checked={!!d.invSent} onChange={e => set('invSent', e.target.checked)} style={{ width: 16, height: 16, cursor: 'pointer' }} />
+          Sent
+        </label>
+        <label style={{ display: 'flex', alignItems: 'center', gap: 8, fontFamily: 'Montserrat', fontSize: 12, fontWeight: 600, color: 'var(--t2)', cursor: 'pointer' }}>
+          <input type="checkbox" checked={!!d.invPaid} onChange={e => set('invPaid', e.target.checked)} style={{ width: 16, height: 16, cursor: 'pointer' }} />
+          Paid
+        </label>
       </div>
 
       {valError && <div style={{ color: 'var(--rd)', fontFamily: 'Montserrat', fontSize: 12.5, marginTop: 12, fontWeight: 600 }}>{valError}</div>}
