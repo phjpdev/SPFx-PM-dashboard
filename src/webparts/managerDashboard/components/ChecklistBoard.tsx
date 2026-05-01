@@ -416,9 +416,9 @@ interface ChecklistBoardProps {
 interface StatCardProps { label: string; value: string; sub: string; col: string; valueCol?: string; }
 const StatCard: React.FC<StatCardProps> = ({ label, value, sub, col, valueCol }) => (
   <div style={{ background: 'var(--s1)', padding: '12px 14px', borderRadius: 8, borderTop: `3px solid ${col}`, borderLeft: '1px solid var(--bd)', borderRight: '1px solid var(--bd)', borderBottom: '1px solid var(--bd)' }}>
-    <div style={{ fontSize: 10, color: 'var(--t4)', letterSpacing: '.08em', fontWeight: 700, marginBottom: 4, textTransform: 'uppercase' }}>{label}</div>
+    <div style={{ fontSize: 10, color: 'var(--t2)', letterSpacing: '.08em', fontWeight: 700, marginBottom: 4, textTransform: 'uppercase' }}>{label}</div>
     <div style={{ fontSize: 22, fontWeight: 700, color: valueCol || 'var(--t1)' }}>{value}</div>
-    <div style={{ fontSize: 11, color: 'var(--t4)', marginTop: 2 }}>{sub}</div>
+    <div style={{ fontSize: 11, color: 'var(--t3)', marginTop: 2, fontWeight: 600 }}>{sub}</div>
   </div>
 );
 
@@ -859,7 +859,7 @@ const PhaseContent: React.FC<PhaseContentProps> = ({ phaseId, projectType, items
   return (
     <div>
       <h2 style={{ fontSize: 18, fontWeight: 700, marginBottom: 6, color: 'var(--t1)' }}>Phase {phase.id} · {phase.name}</h2>
-      <p style={{ fontSize: 13, color: 'var(--t4)', marginBottom: 14 }}>{clearedPhase} of {allPhaseItems} items cleared by Checker.</p>
+      <p style={{ fontSize: 13, color: 'var(--t2)', marginBottom: 14 }}>{clearedPhase} of {allPhaseItems} items cleared by Checker.</p>
 
       {visibleSections.map((section) => {
         const si = phase.sections.indexOf(section);
@@ -874,11 +874,11 @@ const PhaseContent: React.FC<PhaseContentProps> = ({ phaseId, projectType, items
                 background: section.type === 'steel' ? 'rgba(46,109,180,.12)' : section.type === 'concrete' ? 'rgba(107,79,200,.12)' : 'rgba(20,150,120,.12)',
                 color: section.type === 'steel' ? '#1d5ec0' : section.type === 'concrete' ? '#4a2f9c' : '#0d7a56'
               }}>{section.type}</span>
-              <span style={{ marginLeft: 'auto', fontSize: 11, color: 'var(--t4)', fontWeight: 600 }}>{sectionCleared} / {sectionIds.length} cleared</span>
+              <span style={{ marginLeft: 'auto', fontSize: 11, color: 'var(--t2)', fontWeight: 700 }}>{sectionCleared} / {sectionIds.length} cleared</span>
             </div>
 
             {/* Column header */}
-            <div style={{ display: 'grid', gridTemplateColumns: '88px 130px 1fr 80px 120px', background: 'var(--s2)', padding: '9px 16px', fontSize: 10, letterSpacing: '.08em', color: 'var(--t4)', fontWeight: 700, borderTop: '1px solid var(--bd)', textTransform: 'uppercase' }}>
+            <div style={{ display: 'grid', gridTemplateColumns: '88px 130px 1fr 80px 120px', background: 'var(--s2)', padding: '9px 16px', fontSize: 10, letterSpacing: '.08em', color: 'var(--t2)', fontWeight: 700, borderTop: '1px solid var(--bd)', textTransform: 'uppercase' }}>
               <div style={{ textAlign: 'center' }}>Check 1<div style={{ fontSize: 9, color: '#157a15', marginTop: 1, fontWeight: 600 }}>DETAILER</div></div>
               <div style={{ textAlign: 'center' }}>Check 2<div style={{ fontSize: 9, color: '#1d5ec0', marginTop: 1, fontWeight: 600 }}>✓ &nbsp; N/A &nbsp; ✗</div></div>
               <div>Checklist Item</div>
@@ -910,7 +910,7 @@ const PhaseContent: React.FC<PhaseContentProps> = ({ phaseId, projectType, items
                       {st.c1 && <span style={{ position: 'absolute', left: 5, top: 1, width: 5, height: 10, border: 'solid #fff', borderWidth: '0 2px 2px 0', transform: 'rotate(45deg)', display: 'block' }} />}
                       {st.override && !st.c1 && <span style={{ position: 'absolute', top: '50%', left: '50%', transform: 'translate(-50%,-50%)', fontSize: 11, color: '#4a2f9c' }}>−</span>}
                     </span>
-                    <div style={{ fontSize: 10, color: st.override ? '#4a2f9c' : 'var(--t4)', marginTop: 3, lineHeight: 1.2 }}>
+                    <div style={{ fontSize: 10, color: st.override ? '#4a2f9c' : 'var(--t2)', marginTop: 3, lineHeight: 1.2, fontWeight: 600 }}>
                       {st.c1 && st.c1By ? `${st.c1By.split(' ')[0]} · ${st.c1At}` : st.override ? 'skipped' : ''}
                     </div>
                   </div>
@@ -944,9 +944,9 @@ const PhaseContent: React.FC<PhaseContentProps> = ({ phaseId, projectType, items
                     <div style={{ fontSize: 10, marginTop: 3, lineHeight: 1.2,
                       color: st.override ? '#4a2f9c'
                         : st.c2 === 'incorrect' ? '#b82020'
-                        : st.c2 === 'na' ? 'var(--t3)'
-                        : st.c1 ? '#1d5ec0' : 'var(--t4)',
-                      fontWeight: st.c2 === 'incorrect' ? 700 : 400
+                        : st.c2 === 'na' ? 'var(--t2)'
+                        : st.c1 ? '#1d5ec0' : 'var(--t2)',
+                      fontWeight: st.c2 === 'incorrect' ? 700 : 600
                     }}>
                       {st.override ? `PM override · ${st.overrideAt || ''}`
                         : st.c2 === 'cleared' && st.c2By ? `${st.c2By.split(' ')[0]} · ${st.c2At}`
@@ -958,7 +958,7 @@ const PhaseContent: React.FC<PhaseContentProps> = ({ phaseId, projectType, items
                   </div>
 
                   {/* Item text */}
-                  <div style={{ color: c2Locked ? 'var(--t4)' : 'var(--t1)', lineHeight: 1.4 }}>
+                  <div style={{ color: c2Locked ? 'var(--t2)' : 'var(--t1)', lineHeight: 1.4 }}>
                     {item[0]}
                     {st.override && <span style={{ background: 'rgba(107,79,200,.12)', color: '#4a2f9c', padding: '2px 6px', borderRadius: 3, fontSize: 10, fontWeight: 700, marginLeft: 6 }}>PM OVERRIDE</span>}
                     {st.c2 === 'incorrect' && <span style={{ fontSize: 11, marginLeft: 6, color: '#b82020', fontWeight: 600 }}>· needs fixing</span>}
