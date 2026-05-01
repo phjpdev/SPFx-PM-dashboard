@@ -338,16 +338,16 @@ export class SharePointService {
 
   // ── Attachments ──────────────────────────────────────────────
 
-  public async getAttachments(spId: number): Promise<{ FileName: string; ServerRelativeUrl: string }[]> {
-    const d = await this.spGet(`/_api/web/lists/getbytitle('${LIST_RFI}')/items(${spId})/AttachmentFiles`);
+  public async getAttachments(spId: number, listName: string = LIST_RFI): Promise<{ FileName: string; ServerRelativeUrl: string }[]> {
+    const d = await this.spGet(`/_api/web/lists/getbytitle('${listName}')/items(${spId})/AttachmentFiles`);
     return d.value || [];
   }
 
-  public async uploadAttachment(spId: number, file: File): Promise<void> {
+  public async uploadAttachment(spId: number, file: File, listName: string = LIST_RFI): Promise<void> {
     const digest = await this.getDigest();
     const buf = await file.arrayBuffer();
     const url = this._siteUrl +
-      `/_api/web/lists/getbytitle('${LIST_RFI}')/items(${spId})/AttachmentFiles/add(FileName='${encodeURIComponent(file.name)}')`;
+      `/_api/web/lists/getbytitle('${listName}')/items(${spId})/AttachmentFiles/add(FileName='${encodeURIComponent(file.name)}')`;
     const r = await fetch(url, {
       method: 'POST',
       credentials: 'include',
@@ -365,11 +365,13 @@ export class SharePointService {
     }
   }
 
-  public async deleteAttachment(spId: number, fileName: string): Promise<void> {
+  public async deleteAttachment(spId: number, fileName: string, listName: string = LIST_RFI): Promise<void> {
     await this.spDelete(
-      `/_api/web/lists/getbytitle('${LIST_RFI}')/items(${spId})/AttachmentFiles/getByFileName('${encodeURIComponent(fileName)}')`
+      `/_api/web/lists/getbytitle('${listName}')/items(${spId})/AttachmentFiles/getByFileName('${encodeURIComponent(fileName)}')`
     );
   }
+
+  public getProjectListName(): string { return LIST_PROJ; }
 
   // ── TeamMembers CRUD ───────────────────────────────────────
 

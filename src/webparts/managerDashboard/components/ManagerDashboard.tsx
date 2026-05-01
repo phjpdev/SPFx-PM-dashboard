@@ -412,13 +412,29 @@ interface ProjFormProps {
   initial: IProject;
   isNew: boolean;
   projects: IProject[];
-  onSave: (p: IProject) => void;
+  spService: SharePointService;
+  siteUrl: string;
+  onSave: (p: IProject, addedFiles: File[], removedFiles: string[]) => void;
   onCancel: () => void;
 }
 
-const ProjForm: React.FC<ProjFormProps> = ({ initial, isNew, projects, onSave, onCancel }) => {
+const ProjForm: React.FC<ProjFormProps> = ({ initial, isNew, projects, spService, siteUrl, onSave, onCancel }) => {
   const [dupError, setDupError] = React.useState('');
   const [valError, setValError] = React.useState('');
+  const [pendingFiles, setPendingFiles] = React.useState<File[]>([]);
+  const [existingAttachments, setExistingAttachments] = React.useState<{ FileName: string; ServerRelativeUrl: string }[]>([]);
+  const [removedFiles, setRemovedFiles] = React.useState<string[]>([]);
+  const noteFileRef = React.useRef<HTMLInputElement>(null);
+  const projListName = spService.getProjectListName();
+  const siteOrigin = siteUrl.replace(/\/sites\/.*/, '');
+
+  React.useEffect(() => {
+    if (!isNew && initial.spId) {
+      spService.getAttachments(initial.spId, projListName).then(setExistingAttachments).catch(() => undefined);
+    }
+  }, [isNew, initial.spId, projListName]);
+
+  const isImageName = (name: string): boolean => /\.(png|jpe?g|gif|webp|bmp|svg)$/i.test(name);
 
   // Auto-calculate next available project number for new projects
   const nextNum = React.useMemo(() => {
@@ -469,7 +485,7 @@ const ProjForm: React.FC<ProjFormProps> = ({ initial, isNew, projects, onSave, o
       setDupError('Project # ' + d.projNum + ' is already in use. Choose a different number.');
       return;
     }
-    onSave(d);
+    onSave(d, pendingFiles, removedFiles);
   };
 
   return (
@@ -572,6 +588,65 @@ const ProjForm: React.FC<ProjFormProps> = ({ initial, isNew, projects, onSave, o
       <FF label="Project Notes">
         <textarea style={{ ...inp, minHeight: 70, resize: 'vertical' }} value={d.notes} onChange={e => set('notes', e.target.value)} placeholder="Add notes..." />
       </FF>
+      <FF label="Note Attachments (images / screenshots)">
+        <div>
+          <input ref={noteFileRef} type="file" accept="image/*" multiple style={{ display: 'none' }}
+            onChange={e => {
+              if (e.target.files) {
+                setPendingFiles(prev => [...prev, ...Array.from(e.target.files!)]);
+                e.target.value = '';
+              }
+            }} />
+          <button type="button" onClick={() => noteFileRef.current?.click()}
+            style={{ ...inp, cursor: 'pointer', background: 'var(--s2)', border: '1px dashed var(--bd)', padding: '8px 12px', fontSize: 12, color: 'var(--t3)', width: '100%', textAlign: 'left' }}>
+            + Click to attach pictures or screenshots...
+          </button>
+          {(existingAttachments.length > 0 || pendingFiles.length > 0) && (
+            <div style={{ marginTop: 10, display: 'flex', flexWrap: 'wrap', gap: 10 }}>
+              {existingAttachments.map((f, i) => {
+                const url = siteOrigin + f.ServerRelativeUrl;
+                const isImg = isImageName(f.FileName);
+                return (
+                  <div key={'ex' + i} style={{ position: 'relative', border: '1px solid var(--bd)', borderRadius: 4, background: 'var(--s2)', padding: 4, width: isImg ? 96 : 'auto', maxWidth: 220 }}>
+                    {isImg ? (
+                      <a href={url} target="_blank" rel="noopener noreferrer">
+                        <img src={url} alt={f.FileName} style={{ width: 88, height: 88, objectFit: 'cover', borderRadius: 2, display: 'block' }} />
+                      </a>
+                    ) : (
+                      <a href={url} target="_blank" rel="noopener noreferrer" style={{ display: 'block', padding: '6px 10px', fontSize: 11.5, color: 'var(--3eg)', fontFamily: 'Montserrat', textDecoration: 'none' }}>
+                        {f.FileName}
+                      </a>
+                    )}
+                    <button type="button" onClick={() => { setRemovedFiles(prev => [...prev, f.FileName]); setExistingAttachments(prev => prev.filter((_, j) => j !== i)); }}
+                      title="Remove"
+                      style={{ position: 'absolute', top: 2, right: 2, background: 'rgba(232,69,69,0.9)', border: 'none', color: '#fff', borderRadius: 3, width: 18, height: 18, fontSize: 12, lineHeight: 1, cursor: 'pointer', fontWeight: 700 }}>
+                      ×
+                    </button>
+                  </div>
+                );
+              })}
+              {pendingFiles.map((f, i) => {
+                const objUrl = URL.createObjectURL(f);
+                const isImg = f.type.startsWith('image/') || isImageName(f.name);
+                return (
+                  <div key={'pd' + i} style={{ position: 'relative', border: '1px solid var(--3eg)', borderRadius: 4, background: 'var(--3eg3)', padding: 4, width: isImg ? 96 : 'auto', maxWidth: 220 }}>
+                    {isImg ? (
+                      <img src={objUrl} alt={f.name} style={{ width: 88, height: 88, objectFit: 'cover', borderRadius: 2, display: 'block' }} />
+                    ) : (
+                      <span style={{ display: 'block', padding: '6px 10px', fontSize: 11.5, color: 'var(--3eg)', fontFamily: 'Montserrat' }}>{f.name}</span>
+                    )}
+                    <button type="button" onClick={() => setPendingFiles(prev => prev.filter((_, j) => j !== i))}
+                      title="Remove"
+                      style={{ position: 'absolute', top: 2, right: 2, background: 'rgba(232,69,69,0.9)', border: 'none', color: '#fff', borderRadius: 3, width: 18, height: 18, fontSize: 12, lineHeight: 1, cursor: 'pointer', fontWeight: 700 }}>
+                      ×
+                    </button>
+                  </div>
+                );
+              })}
+            </div>
+          )}
+        </div>
+      </FF>
 
       <SDiv label="Invoices" />
       {(d.invoices.length > 0 ? d.invoices : []).map((inv, idx) => (
@@ -589,7 +664,7 @@ const ProjForm: React.FC<ProjFormProps> = ({ initial, isNew, projects, onSave, o
           <button onClick={() => { const invs = d.invoices.filter((_, i) => i !== idx); set('invoices', invs); }} style={{ background: 'transparent', border: '1px solid var(--rd)', color: 'var(--rd)', borderRadius: 4, width: 26, height: 26, fontSize: 13, cursor: 'pointer', fontWeight: 700 }}>×</button>
         </div>
       ))}
-      {d.invoices.length < 4 && (
+      {d.invoices.length < 10 && (
         <button onClick={() => set('invoices', [...d.invoices, { invNumber: '', invDate: '', invPaid: false }])} style={{ fontFamily: 'Montserrat', fontSize: 11, fontWeight: 600, padding: '6px 14px', background: 'transparent', border: '1px dashed var(--bd)', color: 'var(--t3)', borderRadius: 5, cursor: 'pointer', marginTop: 4 }}>+ Add Invoice</button>
       )}
 
@@ -1654,7 +1729,7 @@ const ManagerDashboard: React.FC<IManagerDashboardProps> = (props) => {
   const isLocal = (): boolean => spMode === 'local';
 
   // ── CRUD helpers
-  const saveProject = async (d: IProject, isNew: boolean): Promise<void> => {
+  const saveProject = async (d: IProject, isNew: boolean, addedFiles?: File[], removedFiles?: string[]): Promise<void> => {
     try {
       if (isLocal()) {
         if (isNew) {
@@ -1666,19 +1741,36 @@ const ManagerDashboard: React.FC<IManagerDashboardProps> = (props) => {
           setProjects(prev => prev.map(p => p.id === d.id ? { ...d } : p));
           toast('Project saved (local mode).');
         }
+        if (addedFiles && addedFiles.length > 0) {
+          toast('Note: attachments are not saved in local mode.', 'error');
+        }
         setPanel({ type: null });
         return;
       }
+      let spId: number | undefined;
       if (isNew) {
-        const spId = await spService.current.addProject(d);
+        spId = await spService.current.addProject(d);
         const saved: IProject = { ...d, id: d.projNum || String(spId), spId };
         setProjects(prev => [...prev, saved]);
         toast('Project created.');
       } else {
         if (!d.spId) throw new Error('No spId on project');
+        spId = d.spId;
         await spService.current.updateProject(d.spId, d);
         setProjects(prev => prev.map(p => p.id === d.id ? { ...d } : p));
         toast('Project saved.');
+      }
+      const projListName = spService.current.getProjectListName();
+      if (spId && removedFiles && removedFiles.length > 0) {
+        for (const name of removedFiles) {
+          try { await spService.current.deleteAttachment(spId, name, projListName); } catch (_e) { /* ignore */ }
+        }
+      }
+      if (spId && addedFiles && addedFiles.length > 0) {
+        for (const f of addedFiles) {
+          await spService.current.uploadAttachment(spId, f, projListName);
+        }
+        toast(addedFiles.length + ' attachment(s) uploaded.');
       }
       setPanel({ type: null });
     } catch (e) {
@@ -2466,7 +2558,9 @@ const ManagerDashboard: React.FC<IManagerDashboardProps> = (props) => {
             })()}
             isNew={!panel.proj}
             projects={projects}
-            onSave={(d) => { saveProject(d, !panel.proj).catch(() => undefined); }}
+            spService={spService.current}
+            siteUrl={props.siteUrl}
+            onSave={(d, files, removed) => { saveProject(d, !panel.proj, files, removed).catch(() => undefined); }}
             onCancel={() => setPanel({ type: null })}
           />
         )}
