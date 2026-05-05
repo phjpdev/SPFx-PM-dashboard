@@ -363,7 +363,7 @@ const PlanWeekPanel: React.FC<PlanWeekProps> = ({ lastWeekTasks, team, activePro
 
   const submit = (): void => {
     const wsd = weekKey(monday);
-    const valid = rows.filter(r => r.description.trim());
+    const valid = rows.filter(r => r.project && r.taskCode);
     const tasks: Omit<ITask, 'id' | 'spId'>[] = valid.map(r => {
       const carried = r.wipPct !== undefined && r.wipPct > 0;
       return {
@@ -387,7 +387,7 @@ const PlanWeekPanel: React.FC<PlanWeekProps> = ({ lastWeekTasks, team, activePro
 
   const visRows = mode === 'production' ? prodRows : intRows;
   const isProd = mode === 'production';
-  const validCount = rows.filter(r => r.description.trim()).length;
+  const validCount = rows.filter(r => r.project && r.taskCode).length;
 
   return (
     <div style={{ background: 'rgba(42,158,42,0.05)', border: `2px solid ${C.green}`, borderRadius: 8, padding: 20, marginBottom: 16 }}>
