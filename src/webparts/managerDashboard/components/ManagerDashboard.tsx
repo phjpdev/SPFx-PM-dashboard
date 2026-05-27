@@ -1526,12 +1526,35 @@ const ManagerDashboard: React.FC<IManagerDashboardProps> = (props) => {
   // ── CRM password gate
   const [crmUnlocked, setCrmUnlocked] = React.useState(false);
   const [crmPw, setCrmPw] = React.useState('');
+  const [crmPwShow, setCrmPwShow] = React.useState(false);
   const [crmPwError, setCrmPwError] = React.useState(false);
+  const [crmAttempts, setCrmAttempts] = React.useState(0);
+  const [crmLockedUntil, setCrmLockedUntil] = React.useState<number | null>(null);
+  const [crmLockRemain, setCrmLockRemain] = React.useState(0);
   React.useEffect(() => {
     if (!crmUnlocked) return;
     const t = setTimeout(() => setCrmUnlocked(false), 15 * 60 * 1000);
     return () => clearTimeout(t);
   }, [crmUnlocked]);
+  React.useEffect(() => {
+    if (!crmLockedUntil) return;
+    const tick = setInterval(() => {
+      const rem = Math.ceil((crmLockedUntil - Date.now()) / 1000);
+      if (rem <= 0) { setCrmLockedUntil(null); setCrmAttempts(0); setCrmLockRemain(0); clearInterval(tick); }
+      else setCrmLockRemain(rem);
+    }, 1000);
+    return () => clearInterval(tick);
+  }, [crmLockedUntil]);
+  const crmTryUnlock = (): void => {
+    if (crmLockedUntil) return;
+    if (crmPw === 'Account123!@#') {
+      setCrmUnlocked(true); setCrmPw(''); setCrmPwError(false); setCrmAttempts(0);
+    } else {
+      const next = crmAttempts + 1;
+      setCrmAttempts(next); setCrmPwError(true); setCrmPw('');
+      if (next >= 3) { setCrmLockedUntil(Date.now() + 15 * 60 * 1000); }
+    }
+  };
 
   // ── Time Doctor
   const [tdModal, setTdModal] = React.useState(false);
@@ -2524,42 +2547,71 @@ const ManagerDashboard: React.FC<IManagerDashboardProps> = (props) => {
             {!crmUnlocked ? (
               <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center', minHeight: 320, gap: 16 }}>
                 <div style={{ fontFamily: 'Montserrat', fontWeight: 700, fontSize: 15, color: '#d3d1c7', letterSpacing: '.1em' }}>CRM ACCESS</div>
-                <div style={{ fontFamily: 'Montserrat', fontSize: 12, color: '#8a9bb0' }}>Enter password to continue</div>
-                <div style={{ display: 'flex', flexDirection: 'column', gap: 8, width: 280 }}>
-                  <input
-                    type="password"
-                    value={crmPw}
-                    onChange={e => { setCrmPw(e.target.value); setCrmPwError(false); }}
-                    onKeyDown={e => {
-                      if (e.key === 'Enter') {
-                        if (crmPw === 'Account123!@#') { setCrmUnlocked(true); setCrmPw(''); setCrmPwError(false); }
-                        else { setCrmPwError(true); setCrmPw(''); }
-                      }
-                    }}
-                    placeholder="Password"
-                    autoFocus
-                    style={{
-                      padding: '10px 14px', borderRadius: 5, fontSize: 13, fontFamily: 'Montserrat',
-                      background: '#1a2030', color: '#d3d1c7',
-                      border: crmPwError ? '1px solid #c0392b' : '1px solid rgba(138,155,176,.3)',
-                      outline: 'none'
-                    }}
-                  />
-                  {crmPwError && <div style={{ fontFamily: 'Montserrat', fontSize: 11, color: '#c0392b' }}>Incorrect password</div>}
-                  <button
-                    onClick={() => {
-                      if (crmPw === 'Account123!@#') { setCrmUnlocked(true); setCrmPw(''); setCrmPwError(false); }
-                      else { setCrmPwError(true); setCrmPw(''); }
-                    }}
-                    style={{
-                      padding: '10px 0', borderRadius: 5, border: 'none', cursor: 'pointer',
-                      background: 'var(--3eg)', color: '#fff', fontFamily: 'Montserrat', fontWeight: 700,
-                      fontSize: 12, letterSpacing: '.1em', textTransform: 'uppercase'
-                    }}
-                  >
-                    Unlock
-                  </button>
+                <div style={{ fontFamily: 'Montserrat', fontSize: 12, color: '#8a9bb0' }}>
+                  {crmLockedUntil ? 'Too many attempts — try again in' : 'Enter password to continue'}
                 </div>
+                {crmLockedUntil ? (
+                  <div style={{ fontFamily: 'Montserrat', fontWeight: 700, fontSize: 22, color: '#c0392b', letterSpacing: '.05em' }}>
+                    {`${String(Math.floor(crmLockRemain / 60)).padStart(2, '0')}:${String(crmLockRemain % 60).padStart(2, '0')}`}
+                  </div>
+                ) : (
+                  <div style={{ display: 'flex', flexDirection: 'column', gap: 8, width: 280 }}>
+                    <div style={{ position: 'relative' }}>
+                      <input
+                        type={crmPwShow ? 'text' : 'password'}
+                        value={crmPw}
+                        onChange={e => { setCrmPw(e.target.value); setCrmPwError(false); }}
+                        onKeyDown={e => { if (e.key === 'Enter') crmTryUnlock(); }}
+                        placeholder="Password"
+                        autoFocus
+                        style={{
+                          width: '100%', boxSizing: 'border-box',
+                          padding: '10px 40px 10px 14px', borderRadius: 5, fontSize: 13, fontFamily: 'Montserrat',
+                          background: '#1a2030', color: '#d3d1c7',
+                          border: crmPwError ? '1px solid #c0392b' : '1px solid rgba(138,155,176,.3)',
+                          outline: 'none'
+                        }}
+                      />
+                      <button
+                        onClick={() => setCrmPwShow(s => !s)}
+                        style={{
+                          position: 'absolute', right: 10, top: '50%', transform: 'translateY(-50%)',
+                          background: 'none', border: 'none', cursor: 'pointer', padding: 0,
+                          color: '#8a9bb0', display: 'flex', alignItems: 'center'
+                        }}
+                        tabIndex={-1}
+                      >
+                        {crmPwShow ? (
+                          <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+                            <path d="M17.94 17.94A10.07 10.07 0 0 1 12 20c-7 0-11-8-11-8a18.45 18.45 0 0 1 5.06-5.94"/>
+                            <path d="M9.9 4.24A9.12 9.12 0 0 1 12 4c7 0 11 8 11 8a18.5 18.5 0 0 1-2.16 3.19"/>
+                            <line x1="1" y1="1" x2="23" y2="23"/>
+                          </svg>
+                        ) : (
+                          <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+                            <path d="M1 12s4-8 11-8 11 8 11 8-4 8-11 8-11-8-11-8z"/>
+                            <circle cx="12" cy="12" r="3"/>
+                          </svg>
+                        )}
+                      </button>
+                    </div>
+                    {crmPwError && (
+                      <div style={{ fontFamily: 'Montserrat', fontSize: 11, color: '#c0392b' }}>
+                        Incorrect password — {3 - crmAttempts} attempt{3 - crmAttempts === 1 ? '' : 's'} remaining
+                      </div>
+                    )}
+                    <button
+                      onClick={crmTryUnlock}
+                      style={{
+                        padding: '10px 0', borderRadius: 5, border: 'none', cursor: 'pointer',
+                        background: 'var(--3eg)', color: '#fff', fontFamily: 'Montserrat', fontWeight: 700,
+                        fontSize: 12, letterSpacing: '.1em', textTransform: 'uppercase'
+                      }}
+                    >
+                      Unlock
+                    </button>
+                  </div>
+                )}
               </div>
             ) : (
               <div style={{ padding: '48px 0', textAlign: 'center', color: '#8a9bb0', fontFamily: 'Montserrat', fontSize: 14 }}>
