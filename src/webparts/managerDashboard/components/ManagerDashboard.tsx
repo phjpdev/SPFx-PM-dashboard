@@ -1523,6 +1523,16 @@ const ManagerDashboard: React.FC<IManagerDashboardProps> = (props) => {
   // ── Delete modal
   const [del, setDel] = React.useState<DelState>({ open: false, label: '', onConfirm: () => undefined });
 
+  // ── CRM password gate
+  const [crmUnlocked, setCrmUnlocked] = React.useState(false);
+  const [crmPw, setCrmPw] = React.useState('');
+  const [crmPwError, setCrmPwError] = React.useState(false);
+  React.useEffect(() => {
+    if (!crmUnlocked) return;
+    const t = setTimeout(() => setCrmUnlocked(false), 15 * 60 * 1000);
+    return () => clearTimeout(t);
+  }, [crmUnlocked]);
+
   // ── Time Doctor
   const [tdModal, setTdModal] = React.useState(false);
   const [lastTdImport, setLastTdImport] = React.useState<string | null>(null);
@@ -2511,9 +2521,51 @@ const ManagerDashboard: React.FC<IManagerDashboardProps> = (props) => {
         {/* ═══════════════ CRM ═══════════════ */}
         {mod === 'crm' && (
           <div className={styles.fade}>
-            <div style={{ padding: '48px 0', textAlign: 'center', color: '#8a9bb0', fontFamily: 'Montserrat', fontSize: 14 }}>
-              CRM — coming soon
-            </div>
+            {!crmUnlocked ? (
+              <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center', minHeight: 320, gap: 16 }}>
+                <div style={{ fontFamily: 'Montserrat', fontWeight: 700, fontSize: 15, color: '#d3d1c7', letterSpacing: '.1em' }}>CRM ACCESS</div>
+                <div style={{ fontFamily: 'Montserrat', fontSize: 12, color: '#8a9bb0' }}>Enter password to continue</div>
+                <div style={{ display: 'flex', flexDirection: 'column', gap: 8, width: 280 }}>
+                  <input
+                    type="password"
+                    value={crmPw}
+                    onChange={e => { setCrmPw(e.target.value); setCrmPwError(false); }}
+                    onKeyDown={e => {
+                      if (e.key === 'Enter') {
+                        if (crmPw === 'Account123!@#') { setCrmUnlocked(true); setCrmPw(''); setCrmPwError(false); }
+                        else { setCrmPwError(true); setCrmPw(''); }
+                      }
+                    }}
+                    placeholder="Password"
+                    autoFocus
+                    style={{
+                      padding: '10px 14px', borderRadius: 5, fontSize: 13, fontFamily: 'Montserrat',
+                      background: '#1a2030', color: '#d3d1c7',
+                      border: crmPwError ? '1px solid #c0392b' : '1px solid rgba(138,155,176,.3)',
+                      outline: 'none'
+                    }}
+                  />
+                  {crmPwError && <div style={{ fontFamily: 'Montserrat', fontSize: 11, color: '#c0392b' }}>Incorrect password</div>}
+                  <button
+                    onClick={() => {
+                      if (crmPw === 'Account123!@#') { setCrmUnlocked(true); setCrmPw(''); setCrmPwError(false); }
+                      else { setCrmPwError(true); setCrmPw(''); }
+                    }}
+                    style={{
+                      padding: '10px 0', borderRadius: 5, border: 'none', cursor: 'pointer',
+                      background: 'var(--3eg)', color: '#fff', fontFamily: 'Montserrat', fontWeight: 700,
+                      fontSize: 12, letterSpacing: '.1em', textTransform: 'uppercase'
+                    }}
+                  >
+                    Unlock
+                  </button>
+                </div>
+              </div>
+            ) : (
+              <div style={{ padding: '48px 0', textAlign: 'center', color: '#8a9bb0', fontFamily: 'Montserrat', fontSize: 14 }}>
+                CRM — coming soon
+              </div>
+            )}
           </div>
         )}
       </div>
