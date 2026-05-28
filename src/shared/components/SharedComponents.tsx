@@ -132,9 +132,11 @@ export const Panel: React.FC<{ open: boolean; onClose: () => void; title?: strin
 );
 
 // ── Form Field ───────────────────────────────────────────────────────────────
-export const FF: React.FC<{ label: string; span2?: boolean; children: React.ReactNode }> = ({ label, span2, children }) => (
+export const FF: React.FC<{ label: string; span2?: boolean; required?: boolean; children: React.ReactNode }> = ({ label, span2, required, children }) => (
   <div style={{ gridColumn: span2 ? 'span 2' : 'span 1' }}>
-    <label style={{ fontFamily: 'Montserrat', fontWeight: 600, fontSize: 12.5, letterSpacing: '.06em', textTransform: 'uppercase', color: 'var(--t3)', display: 'block', marginBottom: 6 }}>{label}</label>
+    <label style={{ fontFamily: 'Montserrat', fontWeight: 600, fontSize: 12.5, letterSpacing: '.06em', textTransform: 'uppercase', color: 'var(--t3)', display: 'block', marginBottom: 6 }}>
+      {label}{required && <span style={{ color: 'var(--rd)', marginLeft: 3 }}>*</span>}
+    </label>
     {children}
   </div>
 );

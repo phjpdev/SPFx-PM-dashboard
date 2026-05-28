@@ -1,5 +1,7 @@
 export interface IInvoice {
   invNumber: string;
+  invPct: number;
+  invProgressClaim: string;
   invDate: string;
   invPaid: boolean;
 }

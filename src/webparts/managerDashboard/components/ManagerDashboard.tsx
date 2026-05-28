@@ -477,6 +477,7 @@ const ProjForm: React.FC<ProjFormProps> = ({ initial, isNew, projects, spService
     if (!d.startDate) missing.push('Start Date');
     if (!d.finishDate) missing.push('Finish Date');
     if (!d.hrsAllowed || d.hrsAllowed <= 0) missing.push('Hours Allowed');
+    if (d.rfisAllowed === undefined || d.rfisAllowed === null || String(d.rfisAllowed) === '') missing.push('RFIs Allowed');
     if (missing.length > 0) {
       setValError('Required: ' + missing.join(', '));
       return;
@@ -580,7 +581,7 @@ const ProjForm: React.FC<ProjFormProps> = ({ initial, isNew, projects, spService
         <FF label="Hours Used">
           <input style={inp} type="number" step="0.5" value={d.hrsUsed} onChange={e => set('hrsUsed', Number(e.target.value))} />
         </FF>
-        <FF label="RFIs Allowed">
+        <FF label="RFIs Allowed" required>
           <input style={inp} type="number" value={d.rfisAllowed} onChange={e => set('rfisAllowed', Number(e.target.value))} />
         </FF>
       </div>
@@ -651,9 +652,15 @@ const ProjForm: React.FC<ProjFormProps> = ({ initial, isNew, projects, spService
 
       <SDiv label="Invoices" />
       {(d.invoices.length > 0 ? d.invoices : []).map((inv, idx) => (
-        <div key={idx} style={{ display: 'grid', gridTemplateColumns: '1fr 1fr auto auto', gap: '8px', alignItems: 'end', marginBottom: 8 }}>
+        <div key={idx} style={{ display: 'grid', gridTemplateColumns: '1fr 70px 1fr 1fr auto auto', gap: '8px', alignItems: 'end', marginBottom: 8 }}>
           <FF label={idx === 0 ? 'Invoice Number' : ''}>
             <input style={inp} value={inv.invNumber} onChange={e => { const invs = [...d.invoices]; invs[idx] = { ...invs[idx], invNumber: e.target.value }; set('invoices', invs); }} placeholder="INV-001" />
+          </FF>
+          <FF label={idx === 0 ? 'Pct (%)' : ''}>
+            <input style={inp} type="number" min={0} max={100} value={inv.invPct ?? 0} onChange={e => { const invs = [...d.invoices]; invs[idx] = { ...invs[idx], invPct: Number(e.target.value) }; set('invoices', invs); }} placeholder="0" />
+          </FF>
+          <FF label={idx === 0 ? 'Progress Claim' : ''}>
+            <input style={inp} value={inv.invProgressClaim ?? ''} onChange={e => { const invs = [...d.invoices]; invs[idx] = { ...invs[idx], invProgressClaim: e.target.value }; set('invoices', invs); }} placeholder="e.g. Claim 1" />
           </FF>
           <FF label={idx === 0 ? 'Invoice Date' : ''}>
             <input style={inp} type="date" value={inv.invDate} onChange={e => { const invs = [...d.invoices]; invs[idx] = { ...invs[idx], invDate: e.target.value }; set('invoices', invs); }} />
@@ -666,7 +673,7 @@ const ProjForm: React.FC<ProjFormProps> = ({ initial, isNew, projects, spService
         </div>
       ))}
       {d.invoices.length < 10 && (
-        <button onClick={() => set('invoices', [...d.invoices, { invNumber: '', invDate: '', invPaid: false }])} style={{ fontFamily: 'Montserrat', fontSize: 11, fontWeight: 600, padding: '6px 14px', background: 'transparent', border: '1px dashed var(--bd)', color: 'var(--t3)', borderRadius: 5, cursor: 'pointer', marginTop: 4 }}>+ Add Invoice</button>
+        <button onClick={() => set('invoices', [...d.invoices, { invNumber: '', invPct: 0, invProgressClaim: '', invDate: '', invPaid: false }])} style={{ fontFamily: 'Montserrat', fontSize: 11, fontWeight: 600, padding: '6px 14px', background: 'transparent', border: '1px dashed var(--bd)', color: 'var(--t3)', borderRadius: 5, cursor: 'pointer', marginTop: 4 }}>+ Add Invoice</button>
       )}
 
       {valError && <div style={{ color: 'var(--rd)', fontFamily: 'Montserrat', fontSize: 12.5, marginTop: 12, fontWeight: 600 }}>{valError}</div>}
@@ -1516,7 +1523,9 @@ const ManagerDashboard: React.FC<IManagerDashboardProps> = (props) => {
   const [ewoSrch, setEwoSrch] = React.useState('');
   const [ewoParent, setEwoParent] = React.useState('');
   const [ewoStFilt, setEwoStFilt] = React.useState('');
-  const [ewoExp, setEwoExp] = React.useState<Record<string, boolean>>({});
+  const [ewoExp, setEwoExp] = React.useState<Record<string, boolean>>(() => {
+    try { const v = localStorage.getItem('3edge-ewo-exp'); return v ? JSON.parse(v) as Record<string, boolean> : {}; } catch { return {}; }
+  });
 
   // ── Panel
   const [panel, setPanel] = React.useState<PanelState>({ type: null });
@@ -2460,7 +2469,7 @@ const ManagerDashboard: React.FC<IManagerDashboardProps> = (props) => {
               const groupExpanded = ewoExp[parentId] !== false;
               return (
                 <div key={parentId} style={{ marginBottom: 20, background: 'var(--s1)', border: '1px solid var(--bd)', borderRadius: 8, overflow: 'hidden', boxShadow: '0 1px 6px rgba(0,0,0,.06)' }}>
-                  <div onClick={() => setEwoExp(prev => ({ ...prev, [parentId]: !groupExpanded }))}
+                  <div onClick={() => setEwoExp(prev => { const next = { ...prev, [parentId]: !groupExpanded }; try { localStorage.setItem('3edge-ewo-exp', JSON.stringify(next)); } catch { /* ignore */ } return next; })}
                     style={{ padding: '12px 18px', background: 'var(--s2)', borderBottom: '1px solid var(--bd)', display: 'flex', alignItems: 'center', gap: 12, cursor: 'pointer' }}>
                     <span style={{ fontFamily: 'Montserrat', fontWeight: 400, fontSize: 10, color: 'var(--t4)' }}>{groupExpanded ? 'v' : '>'}</span>
                     <span style={{ fontFamily: 'Montserrat', fontWeight: 800, fontSize: 13, color: 'var(--3eg)' }}>{parent ? parent.projNum : parentId}</span>

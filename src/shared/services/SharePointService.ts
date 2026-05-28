@@ -157,7 +157,7 @@ export class SharePointService {
       teamLead: i.teamLead || '',
       teamMembers: i.teamMembers || '',
       notes: i.notes || '',
-      invoices: (() => { try { return JSON.parse(i.invoicesJson || '[]'); } catch { return []; } })(),
+      invoices: (() => { try { return (JSON.parse(i.invoicesJson || '[]') as { invNumber?: string; invPct?: number; invProgressClaim?: string; invDate?: string; invPaid?: boolean }[]).map(inv => ({ invNumber: inv.invNumber || '', invPct: inv.invPct ?? 0, invProgressClaim: inv.invProgressClaim || '', invDate: inv.invDate || '', invPaid: !!inv.invPaid })); } catch { return []; } })(),
       isEwo: i.isEwo || false,
       ewoNum: i.ewoNum || '',
       parentId: i.parentId || null
