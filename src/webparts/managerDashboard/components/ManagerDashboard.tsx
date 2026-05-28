@@ -12,6 +12,7 @@ import { jsPDF } from 'jspdf';
 import * as XLSX from 'xlsx';
 import TaskBoard from './TaskBoard';
 import ChecklistBoard from './ChecklistBoard';
+import CrmBoard from './CrmBoard';
 
 // ── Assets ────────────────────────────────────────────────────────────────────
 import logoImg from '../assets/3edge-logo.png';
@@ -2614,9 +2615,7 @@ const ManagerDashboard: React.FC<IManagerDashboardProps> = (props) => {
                 )}
               </div>
             ) : (
-              <div style={{ padding: '48px 0', textAlign: 'center', color: '#8a9bb0', fontFamily: 'Montserrat', fontSize: 14 }}>
-                CRM — coming soon
-              </div>
+              <CrmBoard />
             )}
           </div>
         )}
