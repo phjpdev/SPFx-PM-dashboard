@@ -1,7 +1,7 @@
 import * as React from 'react';
 
 // ── Types ─────────────────────────────────────────────────────────
-interface CrmPhone { value: string; type: string; }
+interface CrmPhone { value: string; type: string; cc?: string; }
 interface CrmEmail { value: string; type: string; }
 
 export interface CrmPerson {
@@ -24,6 +24,208 @@ export interface CrmCompany {
 // ── Constants ─────────────────────────────────────────────────────
 const PHONE_TYPES  = ['Work', 'Home', 'Mobile', 'Other'];
 const EMAIL_TYPES  = ['Work', 'Home', 'Other'];
+
+const COUNTRY_CODES = [
+  { cc: '+93',   flag: '🇦🇫', name: 'Afghanistan'                        },
+  { cc: '+355',  flag: '🇦🇱', name: 'Albania'                            },
+  { cc: '+213',  flag: '🇩🇿', name: 'Algeria'                            },
+  { cc: '+376',  flag: '🇦🇩', name: 'Andorra'                            },
+  { cc: '+244',  flag: '🇦🇴', name: 'Angola'                             },
+  { cc: '+1268', flag: '🇦🇬', name: 'Antigua and Barbuda'                },
+  { cc: '+54',   flag: '🇦🇷', name: 'Argentina'                          },
+  { cc: '+374',  flag: '🇦🇲', name: 'Armenia'                            },
+  { cc: '+61',   flag: '🇦🇺', name: 'Australia'                          },
+  { cc: '+43',   flag: '🇦🇹', name: 'Austria'                            },
+  { cc: '+994',  flag: '🇦🇿', name: 'Azerbaijan'                         },
+  { cc: '+1242', flag: '🇧🇸', name: 'Bahamas'                            },
+  { cc: '+973',  flag: '🇧🇭', name: 'Bahrain'                            },
+  { cc: '+880',  flag: '🇧🇩', name: 'Bangladesh'                         },
+  { cc: '+1246', flag: '🇧🇧', name: 'Barbados'                           },
+  { cc: '+375',  flag: '🇧🇾', name: 'Belarus'                            },
+  { cc: '+32',   flag: '🇧🇪', name: 'Belgium'                            },
+  { cc: '+501',  flag: '🇧🇿', name: 'Belize'                             },
+  { cc: '+229',  flag: '🇧🇯', name: 'Benin'                              },
+  { cc: '+975',  flag: '🇧🇹', name: 'Bhutan'                             },
+  { cc: '+591',  flag: '🇧🇴', name: 'Bolivia'                            },
+  { cc: '+387',  flag: '🇧🇦', name: 'Bosnia and Herzegovina'             },
+  { cc: '+267',  flag: '🇧🇼', name: 'Botswana'                           },
+  { cc: '+55',   flag: '🇧🇷', name: 'Brazil'                             },
+  { cc: '+673',  flag: '🇧🇳', name: 'Brunei'                             },
+  { cc: '+359',  flag: '🇧🇬', name: 'Bulgaria'                           },
+  { cc: '+226',  flag: '🇧🇫', name: 'Burkina Faso'                       },
+  { cc: '+257',  flag: '🇧🇮', name: 'Burundi'                            },
+  { cc: '+238',  flag: '🇨🇻', name: 'Cabo Verde'                         },
+  { cc: '+855',  flag: '🇰🇭', name: 'Cambodia'                           },
+  { cc: '+237',  flag: '🇨🇲', name: 'Cameroon'                           },
+  { cc: '+1',    flag: '🇨🇦', name: 'Canada'                             },
+  { cc: '+236',  flag: '🇨🇫', name: 'Central African Republic'           },
+  { cc: '+235',  flag: '🇹🇩', name: 'Chad'                               },
+  { cc: '+56',   flag: '🇨🇱', name: 'Chile'                              },
+  { cc: '+86',   flag: '🇨🇳', name: 'China'                              },
+  { cc: '+57',   flag: '🇨🇴', name: 'Colombia'                           },
+  { cc: '+269',  flag: '🇰🇲', name: 'Comoros'                            },
+  { cc: '+243',  flag: '🇨🇩', name: 'Congo (DRC)'                        },
+  { cc: '+242',  flag: '🇨🇬', name: 'Congo (Republic)'                   },
+  { cc: '+506',  flag: '🇨🇷', name: 'Costa Rica'                         },
+  { cc: '+385',  flag: '🇭🇷', name: 'Croatia'                            },
+  { cc: '+53',   flag: '🇨🇺', name: 'Cuba'                               },
+  { cc: '+357',  flag: '🇨🇾', name: 'Cyprus'                             },
+  { cc: '+420',  flag: '🇨🇿', name: 'Czech Republic'                     },
+  { cc: '+45',   flag: '🇩🇰', name: 'Denmark'                            },
+  { cc: '+253',  flag: '🇩🇯', name: 'Djibouti'                           },
+  { cc: '+1767', flag: '🇩🇲', name: 'Dominica'                           },
+  { cc: '+1809', flag: '🇩🇴', name: 'Dominican Republic'                 },
+  { cc: '+593',  flag: '🇪🇨', name: 'Ecuador'                            },
+  { cc: '+20',   flag: '🇪🇬', name: 'Egypt'                              },
+  { cc: '+503',  flag: '🇸🇻', name: 'El Salvador'                        },
+  { cc: '+240',  flag: '🇬🇶', name: 'Equatorial Guinea'                  },
+  { cc: '+291',  flag: '🇪🇷', name: 'Eritrea'                            },
+  { cc: '+372',  flag: '🇪🇪', name: 'Estonia'                            },
+  { cc: '+268',  flag: '🇸🇿', name: 'Eswatini'                           },
+  { cc: '+251',  flag: '🇪🇹', name: 'Ethiopia'                           },
+  { cc: '+679',  flag: '🇫🇯', name: 'Fiji'                               },
+  { cc: '+358',  flag: '🇫🇮', name: 'Finland'                            },
+  { cc: '+33',   flag: '🇫🇷', name: 'France'                             },
+  { cc: '+241',  flag: '🇬🇦', name: 'Gabon'                              },
+  { cc: '+220',  flag: '🇬🇲', name: 'Gambia'                             },
+  { cc: '+995',  flag: '🇬🇪', name: 'Georgia'                            },
+  { cc: '+49',   flag: '🇩🇪', name: 'Germany'                            },
+  { cc: '+233',  flag: '🇬🇭', name: 'Ghana'                              },
+  { cc: '+30',   flag: '🇬🇷', name: 'Greece'                             },
+  { cc: '+1473', flag: '🇬🇩', name: 'Grenada'                            },
+  { cc: '+502',  flag: '🇬🇹', name: 'Guatemala'                          },
+  { cc: '+224',  flag: '🇬🇳', name: 'Guinea'                             },
+  { cc: '+245',  flag: '🇬🇼', name: 'Guinea-Bissau'                      },
+  { cc: '+592',  flag: '🇬🇾', name: 'Guyana'                             },
+  { cc: '+509',  flag: '🇭🇹', name: 'Haiti'                              },
+  { cc: '+504',  flag: '🇭🇳', name: 'Honduras'                           },
+  { cc: '+852',  flag: '🇭🇰', name: 'Hong Kong'                          },
+  { cc: '+36',   flag: '🇭🇺', name: 'Hungary'                            },
+  { cc: '+354',  flag: '🇮🇸', name: 'Iceland'                            },
+  { cc: '+91',   flag: '🇮🇳', name: 'India'                              },
+  { cc: '+62',   flag: '🇮🇩', name: 'Indonesia'                          },
+  { cc: '+98',   flag: '🇮🇷', name: 'Iran'                               },
+  { cc: '+964',  flag: '🇮🇶', name: 'Iraq'                               },
+  { cc: '+353',  flag: '🇮🇪', name: 'Ireland'                            },
+  { cc: '+972',  flag: '🇮🇱', name: 'Israel'                             },
+  { cc: '+39',   flag: '🇮🇹', name: 'Italy'                              },
+  { cc: '+1876', flag: '🇯🇲', name: 'Jamaica'                            },
+  { cc: '+81',   flag: '🇯🇵', name: 'Japan'                              },
+  { cc: '+962',  flag: '🇯🇴', name: 'Jordan'                             },
+  { cc: '+7',    flag: '🇰🇿', name: 'Kazakhstan'                         },
+  { cc: '+254',  flag: '🇰🇪', name: 'Kenya'                              },
+  { cc: '+686',  flag: '🇰🇮', name: 'Kiribati'                           },
+  { cc: '+383',  flag: '🇽🇰', name: 'Kosovo'                             },
+  { cc: '+965',  flag: '🇰🇼', name: 'Kuwait'                             },
+  { cc: '+996',  flag: '🇰🇬', name: 'Kyrgyzstan'                         },
+  { cc: '+856',  flag: '🇱🇦', name: 'Laos'                               },
+  { cc: '+371',  flag: '🇱🇻', name: 'Latvia'                             },
+  { cc: '+961',  flag: '🇱🇧', name: 'Lebanon'                            },
+  { cc: '+266',  flag: '🇱🇸', name: 'Lesotho'                            },
+  { cc: '+231',  flag: '🇱🇷', name: 'Liberia'                            },
+  { cc: '+218',  flag: '🇱🇾', name: 'Libya'                              },
+  { cc: '+423',  flag: '🇱🇮', name: 'Liechtenstein'                      },
+  { cc: '+370',  flag: '🇱🇹', name: 'Lithuania'                          },
+  { cc: '+352',  flag: '🇱🇺', name: 'Luxembourg'                         },
+  { cc: '+853',  flag: '🇲🇴', name: 'Macau'                              },
+  { cc: '+261',  flag: '🇲🇬', name: 'Madagascar'                         },
+  { cc: '+265',  flag: '🇲🇼', name: 'Malawi'                             },
+  { cc: '+60',   flag: '🇲🇾', name: 'Malaysia'                           },
+  { cc: '+960',  flag: '🇲🇻', name: 'Maldives'                           },
+  { cc: '+223',  flag: '🇲🇱', name: 'Mali'                               },
+  { cc: '+356',  flag: '🇲🇹', name: 'Malta'                              },
+  { cc: '+692',  flag: '🇲🇭', name: 'Marshall Islands'                   },
+  { cc: '+222',  flag: '🇲🇷', name: 'Mauritania'                         },
+  { cc: '+230',  flag: '🇲🇺', name: 'Mauritius'                          },
+  { cc: '+52',   flag: '🇲🇽', name: 'Mexico'                             },
+  { cc: '+691',  flag: '🇫🇲', name: 'Micronesia'                         },
+  { cc: '+373',  flag: '🇲🇩', name: 'Moldova'                            },
+  { cc: '+377',  flag: '🇲🇨', name: 'Monaco'                             },
+  { cc: '+976',  flag: '🇲🇳', name: 'Mongolia'                           },
+  { cc: '+382',  flag: '🇲🇪', name: 'Montenegro'                         },
+  { cc: '+212',  flag: '🇲🇦', name: 'Morocco'                            },
+  { cc: '+258',  flag: '🇲🇿', name: 'Mozambique'                         },
+  { cc: '+95',   flag: '🇲🇲', name: 'Myanmar'                            },
+  { cc: '+264',  flag: '🇳🇦', name: 'Namibia'                            },
+  { cc: '+674',  flag: '🇳🇷', name: 'Nauru'                              },
+  { cc: '+977',  flag: '🇳🇵', name: 'Nepal'                              },
+  { cc: '+31',   flag: '🇳🇱', name: 'Netherlands'                        },
+  { cc: '+64',   flag: '🇳🇿', name: 'New Zealand'                        },
+  { cc: '+505',  flag: '🇳🇮', name: 'Nicaragua'                          },
+  { cc: '+227',  flag: '🇳🇪', name: 'Niger'                              },
+  { cc: '+234',  flag: '🇳🇬', name: 'Nigeria'                            },
+  { cc: '+850',  flag: '🇰🇵', name: 'North Korea'                        },
+  { cc: '+389',  flag: '🇲🇰', name: 'North Macedonia'                    },
+  { cc: '+47',   flag: '🇳🇴', name: 'Norway'                             },
+  { cc: '+968',  flag: '🇴🇲', name: 'Oman'                               },
+  { cc: '+92',   flag: '🇵🇰', name: 'Pakistan'                           },
+  { cc: '+680',  flag: '🇵🇼', name: 'Palau'                              },
+  { cc: '+970',  flag: '🇵🇸', name: 'Palestine'                          },
+  { cc: '+507',  flag: '🇵🇦', name: 'Panama'                             },
+  { cc: '+675',  flag: '🇵🇬', name: 'Papua New Guinea'                   },
+  { cc: '+595',  flag: '🇵🇾', name: 'Paraguay'                           },
+  { cc: '+51',   flag: '🇵🇪', name: 'Peru'                               },
+  { cc: '+63',   flag: '🇵🇭', name: 'Philippines'                        },
+  { cc: '+48',   flag: '🇵🇱', name: 'Poland'                             },
+  { cc: '+351',  flag: '🇵🇹', name: 'Portugal'                           },
+  { cc: '+974',  flag: '🇶🇦', name: 'Qatar'                              },
+  { cc: '+40',   flag: '🇷🇴', name: 'Romania'                            },
+  { cc: '+7',    flag: '🇷🇺', name: 'Russia'                             },
+  { cc: '+250',  flag: '🇷🇼', name: 'Rwanda'                             },
+  { cc: '+1869', flag: '🇰🇳', name: 'Saint Kitts and Nevis'              },
+  { cc: '+1758', flag: '🇱🇨', name: 'Saint Lucia'                        },
+  { cc: '+1784', flag: '🇻🇨', name: 'Saint Vincent and the Grenadines'   },
+  { cc: '+685',  flag: '🇼🇸', name: 'Samoa'                              },
+  { cc: '+378',  flag: '🇸🇲', name: 'San Marino'                         },
+  { cc: '+239',  flag: '🇸🇹', name: 'Sao Tome and Principe'              },
+  { cc: '+966',  flag: '🇸🇦', name: 'Saudi Arabia'                       },
+  { cc: '+221',  flag: '🇸🇳', name: 'Senegal'                            },
+  { cc: '+381',  flag: '🇷🇸', name: 'Serbia'                             },
+  { cc: '+248',  flag: '🇸🇨', name: 'Seychelles'                         },
+  { cc: '+232',  flag: '🇸🇱', name: 'Sierra Leone'                       },
+  { cc: '+65',   flag: '🇸🇬', name: 'Singapore'                          },
+  { cc: '+421',  flag: '🇸🇰', name: 'Slovakia'                           },
+  { cc: '+386',  flag: '🇸🇮', name: 'Slovenia'                           },
+  { cc: '+677',  flag: '🇸🇧', name: 'Solomon Islands'                    },
+  { cc: '+252',  flag: '🇸🇴', name: 'Somalia'                            },
+  { cc: '+27',   flag: '🇿🇦', name: 'South Africa'                       },
+  { cc: '+82',   flag: '🇰🇷', name: 'South Korea'                        },
+  { cc: '+211',  flag: '🇸🇸', name: 'South Sudan'                        },
+  { cc: '+34',   flag: '🇪🇸', name: 'Spain'                              },
+  { cc: '+94',   flag: '🇱🇰', name: 'Sri Lanka'                          },
+  { cc: '+249',  flag: '🇸🇩', name: 'Sudan'                              },
+  { cc: '+597',  flag: '🇸🇷', name: 'Suriname'                           },
+  { cc: '+46',   flag: '🇸🇪', name: 'Sweden'                             },
+  { cc: '+41',   flag: '🇨🇭', name: 'Switzerland'                        },
+  { cc: '+963',  flag: '🇸🇾', name: 'Syria'                              },
+  { cc: '+886',  flag: '🇹🇼', name: 'Taiwan'                             },
+  { cc: '+992',  flag: '🇹🇯', name: 'Tajikistan'                         },
+  { cc: '+255',  flag: '🇹🇿', name: 'Tanzania'                           },
+  { cc: '+66',   flag: '🇹🇭', name: 'Thailand'                           },
+  { cc: '+670',  flag: '🇹🇱', name: 'Timor-Leste'                        },
+  { cc: '+228',  flag: '🇹🇬', name: 'Togo'                               },
+  { cc: '+676',  flag: '🇹🇴', name: 'Tonga'                              },
+  { cc: '+1868', flag: '🇹🇹', name: 'Trinidad and Tobago'                },
+  { cc: '+216',  flag: '🇹🇳', name: 'Tunisia'                            },
+  { cc: '+90',   flag: '🇹🇷', name: 'Turkey'                             },
+  { cc: '+993',  flag: '🇹🇲', name: 'Turkmenistan'                       },
+  { cc: '+688',  flag: '🇹🇻', name: 'Tuvalu'                             },
+  { cc: '+256',  flag: '🇺🇬', name: 'Uganda'                             },
+  { cc: '+380',  flag: '🇺🇦', name: 'Ukraine'                            },
+  { cc: '+971',  flag: '🇦🇪', name: 'United Arab Emirates'               },
+  { cc: '+44',   flag: '🇬🇧', name: 'United Kingdom'                     },
+  { cc: '+1',    flag: '🇺🇸', name: 'United States'                      },
+  { cc: '+598',  flag: '🇺🇾', name: 'Uruguay'                            },
+  { cc: '+998',  flag: '🇺🇿', name: 'Uzbekistan'                         },
+  { cc: '+678',  flag: '🇻🇺', name: 'Vanuatu'                            },
+  { cc: '+379',  flag: '🇻🇦', name: 'Vatican City'                       },
+  { cc: '+58',   flag: '🇻🇪', name: 'Venezuela'                          },
+  { cc: '+84',   flag: '🇻🇳', name: 'Vietnam'                            },
+  { cc: '+967',  flag: '🇾🇪', name: 'Yemen'                              },
+  { cc: '+260',  flag: '🇿🇲', name: 'Zambia'                             },
+  { cc: '+263',  flag: '🇿🇼', name: 'Zimbabwe'                           },
+];
+const DEFAULT_CC = '+61';
 const FF           = 'Montserrat,sans-serif';
 const LS_PERSONS   = '3edge-crm-persons';
 const LS_COMPANIES = '3edge-crm-companies';
@@ -51,10 +253,11 @@ const C = {
 // ── Helpers ───────────────────────────────────────────────────────
 const uid      = (): string    => `${Date.now()}-${Math.random().toString(36).substr(2, 5)}`;
 const loadLS   = <T,>(k: string, fb: T): T => { try { const v = localStorage.getItem(k); return v ? (JSON.parse(v) as T) : fb; } catch { return fb; } };
-const firstVal = (arr: CrmPhone[]): string => arr.find(x => x.value)?.value || '—';
+const firstVal = (arr: CrmPhone[]): string => { const p = arr.find(x => x.value); return p ? `${p.cc || DEFAULT_CC} ${p.value}` : '—'; };
 
-const emptyPerson  = (): CrmPerson  => ({ id: uid(), name: '', organizationId: '', phones: [{ value: '', type: 'Work' }], emails: [{ value: '', type: 'Work' }] });
-const emptyCompany = (): CrmCompany => ({ id: uid(), name: '', labels: '', address: '', phones: [{ value: '', type: 'Work' }], emails: [{ value: '', type: 'Work' }] });
+const emptyPhone   = (): CrmPhone   => ({ value: '', type: 'Work', cc: DEFAULT_CC });
+const emptyPerson  = (): CrmPerson  => ({ id: uid(), name: '', organizationId: '', phones: [emptyPhone()], emails: [{ value: '', type: 'Work' }] });
+const emptyCompany = (): CrmCompany => ({ id: uid(), name: '', labels: '', address: '', phones: [emptyPhone()], emails: [{ value: '', type: 'Work' }] });
 
 // ── Shared modal input style ──────────────────────────────────────
 const mi: React.CSSProperties = {
@@ -144,25 +347,64 @@ const Modal: React.FC<{ title: string; onClose: () => void; children: React.Reac
   </div>
 );
 
+// ── Auto-detect country code from a pasted/typed number ──────────
+const CC_SORTED = [...COUNTRY_CODES].sort((a, b) => b.cc.length - a.cc.length);
+
+const detectAndSplit = (raw: string): { cc: string; num: string } | undefined => {
+  const stripped = raw.replace(/[\s\-().]/g, '');
+  if (stripped.length < 4) return undefined;
+  const withPlus = stripped.startsWith('+') ? stripped : '+' + stripped;
+  for (const c of CC_SORTED) {
+    if (withPlus.startsWith(c.cc) && withPlus.length > c.cc.length) {
+      return { cc: c.cc, num: withPlus.slice(c.cc.length) };
+    }
+  }
+  return undefined;
+};
+
 // ── Multi-value field (phone / email) ─────────────────────────────
 const MultiField: React.FC<{
   items: CrmPhone[];
   types: string[];
   addLabel: string;
   placeholder: string;
+  isPhone?: boolean;
   onChange: (items: CrmPhone[]) => void;
-}> = ({ items, types, addLabel, placeholder, onChange }) => (
+}> = ({ items, types, addLabel, placeholder, isPhone, onChange }) => (
   <div style={{ marginBottom: 14 }}>
     {items.map((item, i) => (
-      <div key={i} style={{ display: 'flex', gap: 6, marginBottom: 6, alignItems: 'center' }}>
-        <input value={item.value} onChange={e => { const n = [...items]; n[i] = { ...n[i], value: e.target.value }; onChange(n); }} placeholder={placeholder} style={{ ...mi, flex: 1 }} />
-        <select value={item.type} onChange={e => { const n = [...items]; n[i] = { ...n[i], type: e.target.value }; onChange(n); }} style={{ ...mi, width: 90, flex: 'none' }}>
+      <div key={i} style={{ display: 'flex', gap: 5, marginBottom: 6, alignItems: 'center' }}>
+        {isPhone && (
+          <select
+            value={item.cc || DEFAULT_CC}
+            onChange={e => { const n = [...items]; n[i] = { ...n[i], cc: e.target.value }; onChange(n); }}
+            style={{ ...mi, width: 175, flex: 'none', paddingLeft: 6, paddingRight: 4, fontSize: 12 }}
+          >
+            {COUNTRY_CODES.map(c => (
+              <option key={c.cc + c.name} value={c.cc}>{c.flag} {c.name} ({c.cc})</option>
+            ))}
+          </select>
+        )}
+        <input
+          value={item.value}
+          onChange={e => {
+            const raw = e.target.value;
+            const detected = isPhone ? detectAndSplit(raw) : null;
+            const n = [...items];
+            n[i] = detected ? { ...n[i], cc: detected.cc, value: detected.num } : { ...n[i], value: raw };
+            onChange(n);
+          }}
+          placeholder={placeholder}
+          autoComplete="off"
+          style={{ ...mi, flex: 1 }}
+        />
+        <select value={item.type} onChange={e => { const n = [...items]; n[i] = { ...n[i], type: e.target.value }; onChange(n); }} style={{ ...mi, width: 86, flex: 'none' }}>
           {types.map(t => <option key={t} value={t}>{t}</option>)}
         </select>
         {items.length > 1 && <button onClick={() => onChange(items.filter((_, j) => j !== i))} style={{ background: 'none', border: 'none', color: C.muted, cursor: 'pointer', fontSize: 18, lineHeight: 1, padding: '0 2px', flexShrink: 0 }}>×</button>}
       </div>
     ))}
-    <button onClick={() => onChange([...items, { value: '', type: types[0] }])} style={{ background: 'none', border: 'none', color: C.green, fontFamily: FF, fontSize: 12, cursor: 'pointer', padding: 0 }}>
+    <button onClick={() => onChange([...items, isPhone ? emptyPhone() : { value: '', type: types[0] }])} style={{ background: 'none', border: 'none', color: C.green, fontFamily: FF, fontSize: 12, cursor: 'pointer', padding: 0 }}>
       + Add {addLabel}
     </button>
   </div>
@@ -199,7 +441,7 @@ const PersonModal: React.FC<{ initial: CrmPerson; companies: CrmCompany[]; onSav
         </div>
       </div>
       <label style={ml}>Phone</label>
-      <MultiField items={d.phones} types={PHONE_TYPES} addLabel="phone" placeholder="Phone number" onChange={v => set('phones', v)} />
+      <MultiField items={d.phones} types={PHONE_TYPES} addLabel="phone" placeholder="Phone number" isPhone onChange={v => set('phones', v)} />
       <label style={ml}>Email</label>
       <MultiField items={d.emails} types={EMAIL_TYPES} addLabel="email" placeholder="Email address" onChange={v => set('emails', v)} />
       <ModalFooter onCancel={onClose} onSave={() => { if (d.name.trim()) onSave(d); }} />
@@ -226,7 +468,7 @@ const CompanyModal: React.FC<{ initial: CrmCompany; onSave: (c: CrmCompany) => v
         <AddressSearch value={d.address} onChange={v => set('address', v)} />
       </div>
       <label style={ml}>Phone</label>
-      <MultiField items={d.phones} types={PHONE_TYPES} addLabel="phone" placeholder="Phone number" onChange={v => set('phones', v)} />
+      <MultiField items={d.phones} types={PHONE_TYPES} addLabel="phone" placeholder="Phone number" isPhone onChange={v => set('phones', v)} />
       <label style={ml}>Email</label>
       <MultiField items={d.emails} types={EMAIL_TYPES} addLabel="email" placeholder="Email address" onChange={v => set('emails', v)} />
       <ModalFooter onCancel={onClose} onSave={() => { if (d.name.trim()) onSave(d); }} />
