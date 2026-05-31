@@ -8,6 +8,7 @@ export interface CrmPerson {
   id: string;
   name: string;
   organizationId: string;
+  position: string;
   phones: CrmPhone[];
   emails: CrmEmail[];
 }
@@ -253,10 +254,11 @@ const C = {
 // ── Helpers ───────────────────────────────────────────────────────
 const uid      = (): string    => `${Date.now()}-${Math.random().toString(36).substr(2, 5)}`;
 const loadLS   = <T,>(k: string, fb: T): T => { try { const v = localStorage.getItem(k); return v ? (JSON.parse(v) as T) : fb; } catch { return fb; } };
-const firstVal = (arr: CrmPhone[]): string => { const p = arr.find(x => x.value); return p ? `${p.cc || DEFAULT_CC} ${p.value}` : '—'; };
+const firstPhone = (arr: CrmPhone[]): string => { const p = arr.find(x => x.value); return p ? `${p.cc || DEFAULT_CC} ${p.value}` : '—'; };
+const firstEmail = (arr: CrmPhone[]): string => arr.find(x => x.value)?.value || '—';
 
 const emptyPhone   = (): CrmPhone   => ({ value: '', type: 'Work', cc: DEFAULT_CC });
-const emptyPerson  = (): CrmPerson  => ({ id: uid(), name: '', organizationId: '', phones: [emptyPhone()], emails: [{ value: '', type: 'Work' }] });
+const emptyPerson  = (): CrmPerson  => ({ id: uid(), name: '', organizationId: '', position: '', phones: [emptyPhone()], emails: [{ value: '', type: 'Work' }] });
 const emptyCompany = (): CrmCompany => ({ id: uid(), name: '', labels: '', address: '', phones: [emptyPhone()], emails: [{ value: '', type: 'Work' }] });
 
 // ── Shared modal input style ──────────────────────────────────────
@@ -429,7 +431,7 @@ const PersonModal: React.FC<{ initial: CrmPerson; companies: CrmCompany[]; onSav
         <input value={d.name} onChange={e => set('name', e.target.value)} style={mi} placeholder="Full name" autoFocus />
       </div>
       <div style={{ marginBottom: 14 }}>
-        <label style={ml}>Organization</label>
+        <label style={ml}>Company</label>
         <div style={{ position: 'relative' }}>
           <span style={{ position: 'absolute', left: 9, top: '50%', transform: 'translateY(-50%)', color: C.muted, pointerEvents: 'none' }}>
             <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><rect x="2" y="7" width="20" height="14" rx="2"/><path d="M16 7V5a2 2 0 0 0-4 0v2"/></svg>
@@ -439,6 +441,20 @@ const PersonModal: React.FC<{ initial: CrmPerson; companies: CrmCompany[]; onSav
             {companies.map(c => <option key={c.id} value={c.id}>{c.name}</option>)}
           </select>
         </div>
+      </div>
+      <div style={{ marginBottom: 14 }}>
+        <label style={ml}>Position</label>
+        <select value={d.position} onChange={e => set('position', e.target.value)} style={mi}>
+          <option value="">— Select position —</option>
+          <option>Project Manager</option>
+          <option>Estimator</option>
+          <option>Admin</option>
+          <option>Accounts</option>
+          <option>Construction Mgr</option>
+          <option>Owner</option>
+          <option>Engineer</option>
+          <option>Architect</option>
+        </select>
       </div>
       <label style={ml}>Phone</label>
       <MultiField items={d.phones} types={PHONE_TYPES} addLabel="phone" placeholder="Phone number" isPhone onChange={v => set('phones', v)} />
@@ -568,17 +584,18 @@ const CrmBoard: React.FC = () => {
           <table style={{ width: '100%', borderCollapse: 'collapse', minWidth: 700 }}>
             <thead>
               <tr>
-                <Th label="#"            w={40} />
-                <Th label="Name"         />
-                <Th label="Organization" />
-                <Th label="Phone"        />
-                <Th label="Email"        />
-                <Th label="Actions"      w={100} />
+                <Th label="#"        w={40} />
+                <Th label="Name"     />
+                <Th label="Company"  />
+                <Th label="Position" />
+                <Th label="Phone"    />
+                <Th label="Email"    />
+                <Th label="Actions"  w={100} />
               </tr>
             </thead>
             <tbody>
               {visPersons.length === 0
-                ? emptyRow(6, persons.length === 0 ? 'No persons yet — click + Person to add one.' : 'No results match your search.')
+                ? emptyRow(7, persons.length === 0 ? 'No persons yet — click + Person to add one.' : 'No results match your search.')
                 : visPersons.map((p, idx) => (
                   <tr key={p.id}
                     onMouseEnter={e => { (e.currentTarget as HTMLTableRowElement).style.background = C.rowHover; }}
@@ -587,12 +604,13 @@ const CrmBoard: React.FC = () => {
                     <Td muted>{idx + 1}</Td>
                     <Td><span style={{ fontWeight: 700 }}>{p.name}</span></Td>
                     <Td>
-                      {p.organizationId ? (
-                        <span style={{ color: C.green, fontWeight: 600 }}>{companyName(p.organizationId)}</span>
-                      ) : <span style={{ color: C.muted }}>—</span>}
+                      {p.organizationId
+                        ? <span style={{ color: C.green, fontWeight: 600 }}>{companyName(p.organizationId)}</span>
+                        : <span style={{ color: C.muted }}>—</span>}
                     </Td>
-                    <Td muted>{firstVal(p.phones)}</Td>
-                    <Td muted>{firstVal(p.emails)}</Td>
+                    <Td><span style={{ color: p.position ? C.text : C.muted, fontWeight: p.position ? 700 : 400 }}>{p.position || '—'}</span></Td>
+                    <Td><span style={{ color: C.sub, fontWeight: 600 }}>{firstPhone(p.phones)}</span></Td>
+                    <Td><span style={{ color: C.sub, fontWeight: 600 }}>{firstEmail(p.emails)}</span></Td>
                     <ActionCell onEdit={() => setPersonModal({ ...p })} onDel={() => deletePerson(p.id)} />
                   </tr>
                 ))
@@ -650,8 +668,8 @@ const CrmBoard: React.FC = () => {
                           }
                         </div>
                       </Td>
-                      <Td muted>{firstVal(c.phones)}</Td>
-                      <Td muted>{firstVal(c.emails)}</Td>
+                      <Td><span style={{ color: C.sub, fontWeight: 600 }}>{firstPhone(c.phones)}</span></Td>
+                      <Td><span style={{ color: C.sub, fontWeight: 600 }}>{firstEmail(c.emails)}</span></Td>
                       <Td muted><span title={c.address}>{c.address || '—'}</span></Td>
                       <ActionCell onEdit={() => setCompanyModal({ ...c })} onDel={() => deleteCompany(c.id)} />
                     </tr>
