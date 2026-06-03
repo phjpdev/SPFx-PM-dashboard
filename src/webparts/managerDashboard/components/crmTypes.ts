@@ -12,6 +12,12 @@ export interface CrmActivity {
   done: boolean;
 }
 
+export interface CrmAttachment {
+  id: string;
+  name: string;
+  dataUrl: string;
+}
+
 export interface CrmPerson {
   id: string;
   name: string;
@@ -20,6 +26,7 @@ export interface CrmPerson {
   phones: CrmPhone[];
   emails: CrmEmail[];
   activities?: CrmActivity[];
+  attachments?: CrmAttachment[];
 }
 
 export interface CrmCompany {
