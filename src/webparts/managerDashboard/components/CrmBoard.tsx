@@ -544,16 +544,61 @@ const CompanyModal: React.FC<{ initial: CrmCompany; onSave: (c: CrmCompany) => v
 };
 
 // ── Table helpers ─────────────────────────────────────────────────
-const Th: React.FC<{ label: string; w?: string | number }> = ({ label, w }) => (
-  <th style={{ padding: '9px 12px', textAlign: 'left', fontFamily: FF, fontWeight: 700, fontSize: 10.5, letterSpacing: '.07em', textTransform: 'uppercase', color: C.sub, background: C.thBg, borderBottom: `2px solid ${C.borderMd}`, whiteSpace: 'nowrap', width: w }}>
-    {label}
-  </th>
+const tableStyle: React.CSSProperties = {
+  width: '100%',
+  borderCollapse: 'collapse',
+  tableLayout: 'fixed',
+};
+
+const thStyle = (opts?: { w?: string | number; center?: boolean }): React.CSSProperties => ({
+  padding: '9px 8px',
+  textAlign: opts?.center ? 'center' : 'left',
+  fontFamily: FF,
+  fontWeight: 700,
+  fontSize: 10.5,
+  letterSpacing: '.07em',
+  textTransform: 'uppercase',
+  color: C.sub,
+  background: C.thBg,
+  borderBottom: `2px solid ${C.borderMd}`,
+  whiteSpace: 'normal',
+  lineHeight: 1.3,
+  width: opts?.w,
+});
+
+const Th: React.FC<{ label: string; w?: string | number; center?: boolean }> = ({ label, w, center }) => (
+  <th style={thStyle({ w, center })}>{label}</th>
 );
 
-const Td: React.FC<{ children: React.ReactNode; muted?: boolean; mono?: boolean }> = ({ children, muted, mono }) => (
-  <td style={{ padding: '10px 12px', fontFamily: mono ? 'monospace' : FF, fontSize: 12.5, color: muted ? C.muted : C.text, borderBottom: `1px solid ${C.border}`, verticalAlign: 'middle', maxWidth: 260, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
-    {children}
+const tdBase = (muted?: boolean, mono?: boolean): React.CSSProperties => ({
+  padding: '8px 8px',
+  fontFamily: mono ? 'monospace' : FF,
+  fontSize: 12.5,
+  color: muted ? C.muted : C.text,
+  borderBottom: `1px solid ${C.border}`,
+  verticalAlign: 'middle',
+  wordBreak: 'break-word',
+});
+
+/** Up to 2 lines of text, then ellipsis */
+const cellWrap: React.CSSProperties = {
+  display: '-webkit-box',
+  WebkitLineClamp: 2,
+  WebkitBoxOrient: 'vertical',
+  overflow: 'hidden',
+  whiteSpace: 'normal',
+  wordBreak: 'break-word',
+  lineHeight: 1.35,
+};
+
+const Td: React.FC<{ children: React.ReactNode; muted?: boolean; mono?: boolean; wrap?: boolean }> = ({ children, muted, mono, wrap = true }) => (
+  <td style={tdBase(muted, mono)}>
+    {wrap ? <div style={cellWrap}>{children}</div> : children}
   </td>
+);
+
+const TdIndex: React.FC<{ children: React.ReactNode }> = ({ children }) => (
+  <td style={{ ...tdBase(true), textAlign: 'center', whiteSpace: 'nowrap', padding: '8px 6px' }}>{children}</td>
 );
 
 // ── CrmBoard ──────────────────────────────────────────────────────
@@ -599,11 +644,23 @@ const CrmBoard: React.FC = () => {
     marginBottom: active ? -1 : 0,
   });
 
+  const actionBtn: React.CSSProperties = {
+    padding: '4px 10px',
+    borderRadius: 3,
+    fontFamily: FF,
+    fontWeight: 700,
+    fontSize: 10.5,
+    cursor: 'pointer',
+    width: '100%',
+    boxSizing: 'border-box',
+    textAlign: 'center',
+  };
+
   const ActionCell: React.FC<{ onEdit: () => void; onDel: () => void }> = ({ onEdit, onDel }) => (
-    <td style={{ padding: '8px 12px', borderBottom: `1px solid ${C.border}`, whiteSpace: 'nowrap', width: 100 }}>
-      <div style={{ display: 'flex', gap: 5 }}>
-        <button onClick={onEdit} style={{ padding: '3px 11px', borderRadius: 3, border: 'none', background: C.purple, color: '#fff', fontFamily: FF, fontWeight: 700, fontSize: 10.5, cursor: 'pointer' }}>Edit</button>
-        <button onClick={onDel}  style={{ padding: '3px 11px', borderRadius: 3, border: `1px solid ${C.red}`, background: 'transparent', color: C.red, fontFamily: FF, fontWeight: 700, fontSize: 10.5, cursor: 'pointer' }}>Del</button>
+    <td style={{ padding: '8px 10px 8px 6px', borderBottom: `1px solid ${C.border}`, verticalAlign: 'middle' }}>
+      <div style={{ display: 'flex', flexDirection: 'column', gap: 4, minWidth: 52 }}>
+        <button onClick={onEdit} style={{ ...actionBtn, border: 'none', background: C.purple, color: '#fff' }}>Edit</button>
+        <button onClick={onDel}  style={{ ...actionBtn, border: `1px solid ${C.red}`, background: 'transparent', color: C.red }}>Del</button>
       </div>
     </td>
   );
@@ -613,7 +670,7 @@ const CrmBoard: React.FC = () => {
   );
 
   return (
-    <div style={{ background: C.bg, minHeight: 400, borderRadius: 8, padding: '0 0 24px 0' }}>
+    <div style={{ background: C.bg, minHeight: 400, borderRadius: 8, padding: '0 0 24px 0', width: '100%', maxWidth: '100%', boxSizing: 'border-box' }}>
 
       {/* ── Toolbar */}
       <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-end', marginBottom: 0, padding: '16px 0 0 0' }}>
@@ -643,21 +700,31 @@ const CrmBoard: React.FC = () => {
       </div>
 
       {/* ── Table */}
-      <div style={{ background: C.surface, border: `1px solid ${C.border}`, borderTop: 'none', borderRadius: '0 0 8px 8px', overflowX: 'auto' }}>
+      <div style={{ background: C.surface, border: `1px solid ${C.border}`, borderTop: 'none', borderRadius: '0 0 8px 8px' }}>
 
         {/* Persons table */}
         {tab === 'persons' && (
-          <table style={{ width: '100%', borderCollapse: 'collapse', minWidth: 900 }}>
+          <table style={tableStyle}>
+            <colgroup>
+              <col style={{ width: '5%' }} />
+              <col style={{ width: '11%' }} />
+              <col style={{ width: '13%' }} />
+              <col style={{ width: '9%' }} />
+              <col style={{ width: '20%' }} />
+              <col style={{ width: '12%' }} />
+              <col style={{ width: '13%' }} />
+              <col style={{ width: '9%' }} />
+            </colgroup>
             <thead>
               <tr>
-                <Th label="#"        w={40} />
+                <Th label="#" center />
                 <Th label="Name"     />
                 <Th label="Company"  />
                 <Th label="Position" />
                 <Th label="Location" />
                 <Th label="Phone"    />
                 <Th label="Email"    />
-                <Th label="Actions"  w={100} />
+                <Th label="Actions"  />
               </tr>
             </thead>
             <tbody>
@@ -668,14 +735,14 @@ const CrmBoard: React.FC = () => {
                     onMouseEnter={e => { (e.currentTarget as HTMLTableRowElement).style.background = C.rowHover; }}
                     onMouseLeave={e => { (e.currentTarget as HTMLTableRowElement).style.background = 'transparent'; }}
                   >
-                    <Td muted>{idx + 1}</Td>
-                    <Td><span style={{ fontWeight: 700 }}>{p.name}</span></Td>
+                    <TdIndex>{idx + 1}</TdIndex>
+                    <Td><span style={{ fontWeight: 700 }} title={p.name}>{p.name}</span></Td>
                     <Td>
                       {p.organizationId
-                        ? <span style={{ color: C.green, fontWeight: 600 }}>{companyName(p.organizationId)}</span>
+                        ? <span style={{ color: C.green, fontWeight: 600 }} title={companyName(p.organizationId)}>{companyName(p.organizationId)}</span>
                         : <span style={{ color: C.muted }}>—</span>}
                     </Td>
-                    <Td><span style={{ color: p.position ? C.text : C.muted, fontWeight: p.position ? 700 : 400 }}>{p.position || '—'}</span></Td>
+                    <Td><span style={{ color: p.position ? C.text : C.muted, fontWeight: p.position ? 700 : 400 }} title={p.position}>{p.position || '—'}</span></Td>
                     <Td muted>
                       {(() => {
                         const addr = companyAddress(p.organizationId);
@@ -686,19 +753,16 @@ const CrmBoard: React.FC = () => {
                             target="_blank"
                             rel="noopener noreferrer"
                             title={addr}
-                            style={{ color: C.green, fontWeight: 600, textDecoration: 'none', display: 'inline-flex', alignItems: 'center', gap: 4, maxWidth: 220 }}
+                            style={{ color: C.green, fontWeight: 600, textDecoration: 'none' }}
                             onClick={e => e.stopPropagation()}
                           >
-                            <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" style={{ flexShrink: 0 }}>
-                              <path d="M21 10c0 7-9 13-9 13s-9-6-9-13a9 9 0 0 1 18 0z"/><circle cx="12" cy="10" r="3"/>
-                            </svg>
-                            <span style={{ overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{addr}</span>
+                            {addr}
                           </a>
                         );
                       })()}
                     </Td>
-                    <Td><span style={{ color: C.sub, fontWeight: 600 }}>{firstPhone(p.phones)}</span></Td>
-                    <Td><span style={{ color: C.sub, fontWeight: 600 }}>{firstEmail(p.emails)}</span></Td>
+                    <Td><span style={{ color: C.sub, fontWeight: 600 }} title={firstPhone(p.phones)}>{firstPhone(p.phones)}</span></Td>
+                    <Td><span style={{ color: C.sub, fontWeight: 600 }} title={firstEmail(p.emails)}>{firstEmail(p.emails)}</span></Td>
                     <ActionCell onEdit={() => setPersonModal({ ...p })} onDel={() => deletePerson(p.id)} />
                   </tr>
                 ))
@@ -709,16 +773,25 @@ const CrmBoard: React.FC = () => {
 
         {/* Companies table */}
         {tab === 'companies' && (
-          <table style={{ width: '100%', borderCollapse: 'collapse', minWidth: 800 }}>
+          <table style={tableStyle}>
+            <colgroup>
+              <col style={{ width: '5%' }} />
+              <col style={{ width: '17%' }} />
+              <col style={{ width: '11%' }} />
+              <col style={{ width: '12%' }} />
+              <col style={{ width: '15%' }} />
+              <col style={{ width: '23%' }} />
+              <col style={{ width: '9%' }} />
+            </colgroup>
             <thead>
               <tr>
-                <Th label="#"       w={40} />
+                <Th label="#" center />
                 <Th label="Company" />
                 <Th label="Labels"  />
                 <Th label="Phone"   />
                 <Th label="Email"   />
                 <Th label="Address" />
-                <Th label="Actions" w={100} />
+                <Th label="Actions"  />
               </tr>
             </thead>
             <tbody>
@@ -731,10 +804,10 @@ const CrmBoard: React.FC = () => {
                       onMouseEnter={e => { (e.currentTarget as HTMLTableRowElement).style.background = C.rowHover; }}
                       onMouseLeave={e => { (e.currentTarget as HTMLTableRowElement).style.background = 'transparent'; }}
                     >
-                      <Td muted>{idx + 1}</Td>
+                      <TdIndex>{idx + 1}</TdIndex>
                       <Td>
                         <div style={{ display: 'flex', flexDirection: 'column', gap: 3 }}>
-                          <span style={{ fontWeight: 700 }}>{c.name}</span>
+                          <span style={{ fontWeight: 700 }} title={c.name}>{c.name}</span>
                           {linked.length > 0 && (
                             <div style={{ display: 'flex', gap: 4, flexWrap: 'wrap' }}>
                               {linked.map(p => (
@@ -756,8 +829,8 @@ const CrmBoard: React.FC = () => {
                           }
                         </div>
                       </Td>
-                      <Td><span style={{ color: C.sub, fontWeight: 600 }}>{firstPhone(c.phones)}</span></Td>
-                      <Td><span style={{ color: C.sub, fontWeight: 600 }}>{firstEmail(c.emails)}</span></Td>
+                      <Td><span style={{ color: C.sub, fontWeight: 600 }} title={firstPhone(c.phones)}>{firstPhone(c.phones)}</span></Td>
+                      <Td><span style={{ color: C.sub, fontWeight: 600 }} title={firstEmail(c.emails)}>{firstEmail(c.emails)}</span></Td>
                       <Td muted><span title={c.address}>{c.address || '—'}</span></Td>
                       <ActionCell onEdit={() => setCompanyModal({ ...c })} onDel={() => deleteCompany(c.id)} />
                     </tr>
