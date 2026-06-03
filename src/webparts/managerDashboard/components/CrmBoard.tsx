@@ -473,8 +473,9 @@ const CrmImportModal: React.FC<{
   return (
     <Modal title="Import CRM Data" onClose={onClose}>
       <p style={{ fontFamily: FF, fontSize: 12, color: C.sub, lineHeight: 1.55, margin: '0 0 16px 0' }}>
-        Upload Pipedrive exports: organizations first (optional if already imported), then people.
-        Person locations use the linked company address.
+        Upload Pipedrive exports. Each file replaces that list entirely and imports every row
+        (645 people, 512 organization rows — every Excel row is kept, even duplicate names).
+        Import organizations before people so company links work.
       </p>
       <div style={{ marginBottom: 14 }}>
         <label style={ml}>Organizations (.xlsx)</label>
