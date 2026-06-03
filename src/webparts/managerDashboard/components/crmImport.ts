@@ -3,7 +3,7 @@ import type { CrmCompany, CrmPerson, CrmPhone, CrmEmail } from './crmTypes';
 
 const DEFAULT_CC = '+61';
 
-const uid = (): string => `${Date.now()}-${Math.random().toString(36).substr(2, 5)}`;
+const uid = (): string => `${Date.now()}-${Math.random().toString(36).substr(2, 9)}`;
 
 const splitList = (s: string): string[] =>
   String(s || '')
@@ -45,15 +45,6 @@ const parseEmails = (raw: string): CrmEmail[] => {
   return vals.length ? vals.map(v => ({ value: v, type: 'Work' as const })) : [{ value: '', type: 'Work' }];
 };
 
-export interface CrmImportPreview {
-  companies: CrmCompany[];
-  persons: CrmPerson[];
-  companyCount: number;
-  personCount: number;
-  skippedCompanies: number;
-  skippedPersons: number;
-}
-
 export function parseOrganizationsFile(data: ArrayBuffer): CrmCompany[] {
   const wb = XLSX.read(data, { type: 'array' });
   const ws = wb.Sheets[wb.SheetNames[0]];
@@ -83,6 +74,16 @@ export function parseOrganizationsFile(data: ArrayBuffer): CrmCompany[] {
     });
   }
   return out;
+}
+
+/** First company per normalized name wins (for linking when Excel has duplicate org names). */
+export function buildCompanyMap(companies: CrmCompany[]): Map<string, CrmCompany> {
+  const m = new Map<string, CrmCompany>();
+  companies.forEach(c => {
+    const k = normName(c.name);
+    if (!m.has(k)) m.set(k, c);
+  });
+  return m;
 }
 
 export function parsePeopleFile(data: ArrayBuffer, companyByName: Map<string, CrmCompany>): CrmPerson[] {
@@ -124,95 +125,15 @@ export function parsePeopleFile(data: ArrayBuffer, companyByName: Map<string, Cr
   return out;
 }
 
-/** Merge imported rows into existing CRM data (match by name / name+org). */
-export function mergeCrmImport(
-  existingCompanies: CrmCompany[],
-  existingPersons: CrmPerson[],
-  importedCompanies: CrmCompany[],
-  importedPersons: CrmPerson[],
-): { companies: CrmCompany[]; persons: CrmPerson[]; preview: CrmImportPreview } {
-  const companies = [...existingCompanies];
-  const companyByName = new Map<string, CrmCompany>();
-  companies.forEach(c => companyByName.set(normName(c.name), c));
-
-  let skippedCompanies = 0;
-  for (const imp of importedCompanies) {
-    const key = normName(imp.name);
-    const prev = companyByName.get(key);
-    if (prev) {
-      prev.address = imp.address || prev.address;
-      skippedCompanies++;
-    } else {
-      companies.push(imp);
-      companyByName.set(key, imp);
-    }
-  }
-
-  // Re-link persons to merged company ids
-  const relinkedPersons = importedPersons.map(p => {
-    if (!p.organizationId) return p;
-    const impCo = importedCompanies.find(c => c.id === p.organizationId);
-    if (!impCo) return p;
-    const merged = companyByName.get(normName(impCo.name));
-    return merged ? { ...p, organizationId: merged.id } : p;
-  });
-
-  // Fix org links by name from import file (organizationId may point to temp ids)
-  relinkedPersons.forEach(p => {
-    const imp = importedPersons.find(x => x.id === p.id);
-    if (!imp?.organizationId) return;
-    const impCo = importedCompanies.find(c => c.id === imp.organizationId);
-    if (impCo) {
-      const merged = companyByName.get(normName(impCo.name));
-      if (merged) p.organizationId = merged.id;
-    }
-  });
-
-  const persons = [...existingPersons];
-  let skippedPersons = 0;
-  for (const imp of relinkedPersons) {
-    const orgKey = imp.organizationId || '';
-    const dup = persons.find(
-      p => normName(p.name) === normName(imp.name) && p.organizationId === orgKey,
-    );
-    if (dup) {
-      dup.position = imp.position || dup.position;
-      dup.phones = imp.phones.some(x => x.value) ? imp.phones : dup.phones;
-      dup.emails = imp.emails.some(x => x.value) ? imp.emails : dup.emails;
-      dup.organizationId = imp.organizationId || dup.organizationId;
-      skippedPersons++;
-    } else {
-      persons.push(imp);
-    }
-  }
-
-  return {
-    companies,
-    persons,
-    preview: {
-      companies,
-      persons,
-      companyCount: importedCompanies.length,
-      personCount: importedPersons.length,
-      skippedCompanies,
-      skippedPersons,
-    },
-  };
-}
-
-export function buildCompanyMap(companies: CrmCompany[]): Map<string, CrmCompany> {
-  const m = new Map<string, CrmCompany>();
-  companies.forEach(c => m.set(normName(c.name), c));
-  return m;
-}
-
 export interface CrmImportStats {
-  importedCompanies: number;
-  importedPersons: number;
-  updatedCompanies: number;
-  updatedPersons: number;
+  companyRows: number;
+  personRows: number;
 }
 
+/**
+ * Import every Excel row as its own record (no deduplication).
+ * Selected files replace that section of CRM data entirely.
+ */
 export function runCrmImport(
   existingCompanies: CrmCompany[],
   existingPersons: CrmPerson[],
@@ -223,37 +144,23 @@ export function runCrmImport(
     throw new Error('Select at least one file to import.');
   }
 
-  let importedCompanies: CrmCompany[] = [];
-  let importedPersons: CrmPerson[] = [];
+  let companies = existingCompanies;
+  let persons = existingPersons;
 
-  if (orgBuffer) importedCompanies = parseOrganizationsFile(orgBuffer);
-
-  const { companies: mergedCompanies } = mergeCrmImport(
-    existingCompanies,
-    [],
-    importedCompanies,
-    [],
-  );
-
-  if (peopleBuffer) {
-    importedPersons = parsePeopleFile(peopleBuffer, buildCompanyMap(mergedCompanies));
+  if (orgBuffer) {
+    companies = parseOrganizationsFile(orgBuffer);
   }
 
-  const { companies, persons, preview } = mergeCrmImport(
-    existingCompanies,
-    existingPersons,
-    importedCompanies,
-    importedPersons,
-  );
+  if (peopleBuffer) {
+    persons = parsePeopleFile(peopleBuffer, buildCompanyMap(companies));
+  }
 
   return {
     companies,
     persons,
     stats: {
-      importedCompanies: preview.companyCount,
-      importedPersons: preview.personCount,
-      updatedCompanies: preview.skippedCompanies,
-      updatedPersons: preview.skippedPersons,
+      companyRows: companies.length,
+      personRows: persons.length,
     },
   };
 }
