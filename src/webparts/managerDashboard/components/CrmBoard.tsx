@@ -1,5 +1,6 @@
 import * as React from 'react';
 import { runCrmImport } from './crmImport';
+import CrmRfqTab from './CrmRfqTab';
 import type { CrmPhone, CrmEmail, CrmPerson, CrmCompany, CrmActivity, CrmActivityType, CrmAttachment } from './crmTypes';
 
 export type { CrmPerson, CrmCompany, CrmActivity } from './crmTypes';
@@ -1143,6 +1144,18 @@ const CrmBoard: React.FC = () => {
           }
         </div>
       </div>
+      )}
+
+      {tab === 'rfq' && (
+        <div style={{ background: C.surface, border: `1px solid ${C.border}`, borderTop: 'none', borderRadius: '0 0 8px 8px', padding: '0 16px 16px 16px' }}>
+          <CrmRfqTab persons={persons} companies={companies} />
+        </div>
+      )}
+
+      {tab === 'quotes' && (
+        <div style={{ background: C.surface, border: `1px solid ${C.border}`, borderTop: 'none', borderRadius: '0 0 8px 8px', padding: 48, textAlign: 'center', fontFamily: FF, fontSize: 13, color: C.muted }}>
+          Quotes — coming soon.
+        </div>
       )}
 
       {/* ── Modals */}
