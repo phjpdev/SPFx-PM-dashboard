@@ -1,26 +1,8 @@
 import * as React from 'react';
+import { runCrmImport } from './crmImport';
+import type { CrmPhone, CrmEmail, CrmPerson, CrmCompany } from './crmTypes';
 
-// ── Types ─────────────────────────────────────────────────────────
-interface CrmPhone { value: string; type: string; cc?: string; }
-interface CrmEmail { value: string; type: string; }
-
-export interface CrmPerson {
-  id: string;
-  name: string;
-  organizationId: string;
-  position: string;
-  phones: CrmPhone[];
-  emails: CrmEmail[];
-}
-
-export interface CrmCompany {
-  id: string;
-  name: string;
-  labels: string;
-  address: string;
-  phones: CrmPhone[];
-  emails: CrmEmail[];
-}
+export type { CrmPerson, CrmCompany } from './crmTypes';
 
 // ── Constants ─────────────────────────────────────────────────────
 const PHONE_TYPES  = ['Work', 'Home', 'Mobile', 'Other'];
@@ -255,7 +237,10 @@ const C = {
 const uid      = (): string    => `${Date.now()}-${Math.random().toString(36).substr(2, 5)}`;
 const loadLS   = <T,>(k: string, fb: T): T => { try { const v = localStorage.getItem(k); return v ? (JSON.parse(v) as T) : fb; } catch { return fb; } };
 const firstPhone = (arr: CrmPhone[]): string => { const p = arr.find(x => x.value); return p ? `${p.cc || DEFAULT_CC} ${p.value}` : '—'; };
-const firstEmail = (arr: CrmPhone[]): string => arr.find(x => x.value)?.value || '—';
+const firstEmail = (arr: CrmEmail[]): string => arr.find(x => x.value)?.value || '—';
+
+const mapsUrl = (address: string): string =>
+  `https://www.google.com/maps/search/?api=1&query=${encodeURIComponent(address)}`;
 
 const emptyPhone   = (): CrmPhone   => ({ value: '', type: 'Work', cc: DEFAULT_CC });
 const emptyPerson  = (): CrmPerson  => ({ id: uid(), name: '', organizationId: '', position: '', phones: [emptyPhone()], emails: [{ value: '', type: 'Work' }] });
@@ -465,6 +450,72 @@ const PersonModal: React.FC<{ initial: CrmPerson; companies: CrmCompany[]; onSav
   );
 };
 
+// ── CRM Import Modal ──────────────────────────────────────────────
+const CrmImportModal: React.FC<{
+  onClose: () => void;
+  onImport: (orgBuf: ArrayBuffer | null, peopleBuf: ArrayBuffer | null) => void;
+}> = ({ onClose, onImport }) => {
+  const [orgBuf, setOrgBuf]       = React.useState<ArrayBuffer | null>(null);
+  const [peopleBuf, setPeopleBuf] = React.useState<ArrayBuffer | null>(null);
+  const [orgName, setOrgName]     = React.useState('');
+  const [peopleName, setPeopleName] = React.useState('');
+  const [error, setError]         = React.useState('');
+
+  const readFile = (f: File | null, setter: (b: ArrayBuffer | null) => void, nameSetter: (n: string) => void): void => {
+    if (!f) return;
+    setError('');
+    const reader = new FileReader();
+    reader.onload = ev => { setter(ev.target!.result as ArrayBuffer); nameSetter(f.name); };
+    reader.onerror = () => setError('Failed to read file.');
+    reader.readAsArrayBuffer(f);
+  };
+
+  return (
+    <Modal title="Import CRM Data" onClose={onClose}>
+      <p style={{ fontFamily: FF, fontSize: 12, color: C.sub, lineHeight: 1.55, margin: '0 0 16px 0' }}>
+        Upload Pipedrive exports: organizations first (optional if already imported), then people.
+        Person locations use the linked company address.
+      </p>
+      <div style={{ marginBottom: 14 }}>
+        <label style={ml}>Organizations (.xlsx)</label>
+        <input
+          type="file"
+          accept=".xls,.xlsx"
+          onChange={e => readFile(e.target.files?.[0] || null, setOrgBuf, setOrgName)}
+          style={{ fontFamily: FF, fontSize: 12, width: '100%' }}
+        />
+        {orgName && <div style={{ fontSize: 11, color: C.green, marginTop: 4, fontFamily: FF }}>{orgName}</div>}
+      </div>
+      <div style={{ marginBottom: 14 }}>
+        <label style={ml}>People (.xlsx)</label>
+        <input
+          type="file"
+          accept=".xls,.xlsx"
+          onChange={e => readFile(e.target.files?.[0] || null, setPeopleBuf, setPeopleName)}
+          style={{ fontFamily: FF, fontSize: 12, width: '100%' }}
+        />
+        {peopleName && <div style={{ fontSize: 11, color: C.green, marginTop: 4, fontFamily: FF }}>{peopleName}</div>}
+      </div>
+      {error && (
+        <div style={{ padding: '10px 12px', borderRadius: 4, background: 'rgba(192,57,43,.08)', border: `1px solid ${C.red}`, color: C.red, fontFamily: FF, fontSize: 12, marginBottom: 12 }}>
+          {error}
+        </div>
+      )}
+      <ModalFooter
+        onCancel={onClose}
+        onSave={() => {
+          if (!orgBuf && !peopleBuf) { setError('Select at least one file.'); return; }
+          try {
+            onImport(orgBuf, peopleBuf);
+          } catch (e) {
+            setError(String(e instanceof Error ? e.message : e));
+          }
+        }}
+      />
+    </Modal>
+  );
+};
+
 // ── Company Modal ─────────────────────────────────────────────────
 const CompanyModal: React.FC<{ initial: CrmCompany; onSave: (c: CrmCompany) => void; onClose: () => void }> = ({ initial, onSave, onClose }) => {
   const [d, setD] = React.useState<CrmCompany>(initial);
@@ -512,6 +563,7 @@ const CrmBoard: React.FC = () => {
   const [companies, setCompanies] = React.useState<CrmCompany[]>(() => loadLS<CrmCompany[]>(LS_COMPANIES, []));
   const [personModal, setPersonModal]   = React.useState<CrmPerson | null>(null);
   const [companyModal, setCompanyModal] = React.useState<CrmCompany | null>(null);
+  const [importModal, setImportModal]   = React.useState(false);
   const [search, setSearch]             = React.useState('');
 
   React.useEffect(() => { localStorage.setItem(LS_PERSONS,   JSON.stringify(persons));   }, [persons]);
@@ -522,9 +574,17 @@ const CrmBoard: React.FC = () => {
   const saveCompany   = (c: CrmCompany): void => { setCompanies(prev => prev.some(x => x.id === c.id) ? prev.map(x => x.id === c.id ? c : x) : [...prev, c]); setCompanyModal(null); };
   const deleteCompany = (id: string):    void => { if (confirm('Delete this company?')) setCompanies(prev => prev.filter(x => x.id !== id)); };
   const companyName   = (id: string):    string => companies.find(c => c.id === id)?.name || '';
+  const companyAddress = (id: string):   string => companies.find(c => c.id === id)?.address || '';
+
+  const handleImport = (orgBuf: ArrayBuffer | null, peopleBuf: ArrayBuffer | null): void => {
+    const { companies: nextCo, persons: nextPe } = runCrmImport(companies, persons, orgBuf, peopleBuf);
+    setCompanies(nextCo);
+    setPersons(nextPe);
+    setImportModal(false);
+  };
 
   const q = search.toLowerCase();
-  const visPersons  = persons.filter(p  => !q || p.name.toLowerCase().includes(q) || companyName(p.organizationId).toLowerCase().includes(q));
+  const visPersons  = persons.filter(p  => !q || p.name.toLowerCase().includes(q) || companyName(p.organizationId).toLowerCase().includes(q) || companyAddress(p.organizationId).toLowerCase().includes(q));
   const visCompanies = companies.filter(c => !q || c.name.toLowerCase().includes(q) || c.labels.toLowerCase().includes(q) || c.address.toLowerCase().includes(q));
 
   const tabBtn = (active: boolean): React.CSSProperties => ({
@@ -568,6 +628,12 @@ const CrmBoard: React.FC = () => {
             placeholder={`Search ${tab}…`}
             style={{ padding: '6px 10px', borderRadius: 4, border: `1px solid ${C.borderMd}`, background: C.surface, fontFamily: FF, fontSize: 12, color: C.text, outline: 'none', width: 200 }}
           />
+          <button
+            onClick={() => setImportModal(true)}
+            style={{ padding: '7px 14px', borderRadius: 4, border: `1px solid ${C.borderMd}`, background: C.surface, color: C.sub, fontFamily: FF, fontWeight: 700, fontSize: 12, cursor: 'pointer', whiteSpace: 'nowrap' }}
+          >
+            Import
+          </button>
           {tab === 'persons' ? (
             <button onClick={() => setPersonModal(emptyPerson())} style={{ padding: '7px 16px', borderRadius: 4, border: 'none', background: C.green, color: '#fff', fontFamily: FF, fontWeight: 700, fontSize: 12, cursor: 'pointer', whiteSpace: 'nowrap' }}>+ Person</button>
           ) : (
@@ -581,13 +647,14 @@ const CrmBoard: React.FC = () => {
 
         {/* Persons table */}
         {tab === 'persons' && (
-          <table style={{ width: '100%', borderCollapse: 'collapse', minWidth: 700 }}>
+          <table style={{ width: '100%', borderCollapse: 'collapse', minWidth: 900 }}>
             <thead>
               <tr>
                 <Th label="#"        w={40} />
                 <Th label="Name"     />
                 <Th label="Company"  />
                 <Th label="Position" />
+                <Th label="Location" />
                 <Th label="Phone"    />
                 <Th label="Email"    />
                 <Th label="Actions"  w={100} />
@@ -595,7 +662,7 @@ const CrmBoard: React.FC = () => {
             </thead>
             <tbody>
               {visPersons.length === 0
-                ? emptyRow(7, persons.length === 0 ? 'No persons yet — click + Person to add one.' : 'No results match your search.')
+                ? emptyRow(8, persons.length === 0 ? 'No persons yet — click + Person or Import to add data.' : 'No results match your search.')
                 : visPersons.map((p, idx) => (
                   <tr key={p.id}
                     onMouseEnter={e => { (e.currentTarget as HTMLTableRowElement).style.background = C.rowHover; }}
@@ -609,6 +676,27 @@ const CrmBoard: React.FC = () => {
                         : <span style={{ color: C.muted }}>—</span>}
                     </Td>
                     <Td><span style={{ color: p.position ? C.text : C.muted, fontWeight: p.position ? 700 : 400 }}>{p.position || '—'}</span></Td>
+                    <Td muted>
+                      {(() => {
+                        const addr = companyAddress(p.organizationId);
+                        if (!addr) return '—';
+                        return (
+                          <a
+                            href={mapsUrl(addr)}
+                            target="_blank"
+                            rel="noopener noreferrer"
+                            title={addr}
+                            style={{ color: C.green, fontWeight: 600, textDecoration: 'none', display: 'inline-flex', alignItems: 'center', gap: 4, maxWidth: 220 }}
+                            onClick={e => e.stopPropagation()}
+                          >
+                            <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" style={{ flexShrink: 0 }}>
+                              <path d="M21 10c0 7-9 13-9 13s-9-6-9-13a9 9 0 0 1 18 0z"/><circle cx="12" cy="10" r="3"/>
+                            </svg>
+                            <span style={{ overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{addr}</span>
+                          </a>
+                        );
+                      })()}
+                    </Td>
                     <Td><span style={{ color: C.sub, fontWeight: 600 }}>{firstPhone(p.phones)}</span></Td>
                     <Td><span style={{ color: C.sub, fontWeight: 600 }}>{firstEmail(p.emails)}</span></Td>
                     <ActionCell onEdit={() => setPersonModal({ ...p })} onDel={() => deletePerson(p.id)} />
@@ -650,7 +738,7 @@ const CrmBoard: React.FC = () => {
                           {linked.length > 0 && (
                             <div style={{ display: 'flex', gap: 4, flexWrap: 'wrap' }}>
                               {linked.map(p => (
-                                <span key={p.id} style={{ fontSize: 10, fontFamily: FF, color: C.green, background: C.greenBg, border: `1px solid ${C.greenBd}`, borderRadius: 3, padding: '1px 6px', cursor: 'pointer' }} onClick={() => setTab('persons')}>
+                                <span key={p.id} style={{ fontSize: 10, fontFamily: FF, color: C.green, background: C.greenBg, border: `1px solid ${C.greenBd}`, borderRadius: 3, padding: '1px 6px', cursor: 'pointer' }} onClick={() => { setTab('persons'); setSearch(p.name); }} title={companyAddress(c.id) || 'View person'}>
                                   {p.name}
                                 </span>
                               ))}
@@ -692,6 +780,7 @@ const CrmBoard: React.FC = () => {
       {/* ── Modals */}
       {personModal  && <PersonModal  initial={personModal}  companies={companies} onSave={savePerson}  onClose={() => setPersonModal(null)}  />}
       {companyModal && <CompanyModal initial={companyModal}                        onSave={saveCompany} onClose={() => setCompanyModal(null)} />}
+      {importModal   && <CrmImportModal onClose={() => setImportModal(false)} onImport={handleImport} />}
     </div>
   );
 };
