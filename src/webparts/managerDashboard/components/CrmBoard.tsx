@@ -4,6 +4,8 @@ import type { CrmPhone, CrmEmail, CrmPerson, CrmCompany, CrmActivity, CrmActivit
 
 export type { CrmPerson, CrmCompany, CrmActivity } from './crmTypes';
 
+type CrmTab = 'persons' | 'companies' | 'rfq' | 'quotes';
+
 // ── Constants ─────────────────────────────────────────────────────
 const PHONE_TYPES  = ['Work', 'Home', 'Mobile', 'Other'];
 const EMAIL_TYPES  = ['Work', 'Home', 'Other'];
@@ -769,7 +771,7 @@ const TdIndex: React.FC<{ children: React.ReactNode }> = ({ children }) => (
 
 // ── CrmBoard ──────────────────────────────────────────────────────
 const CrmBoard: React.FC = () => {
-  const [tab, setTab]             = React.useState<'persons' | 'companies'>('persons');
+  const [tab, setTab]             = React.useState<CrmTab>('persons');
   const [persons, setPersons]     = React.useState<CrmPerson[]>(() => loadLS<CrmPerson[]>(LS_PERSONS, []));
   const [companies, setCompanies] = React.useState<CrmCompany[]>(() => loadLS<CrmCompany[]>(LS_COMPANIES, []));
   const [personModal, setPersonModal]   = React.useState<CrmPerson | null>(null);
@@ -897,29 +899,34 @@ const CrmBoard: React.FC = () => {
         <div style={{ display: 'flex', gap: 0, borderBottom: `1px solid ${C.border}`, paddingBottom: 0 }}>
           <button style={tabBtn(tab === 'persons')}   onClick={() => { setTab('persons');   setSearch(''); setCompanySort(null); }}>Persons</button>
           <button style={tabBtn(tab === 'companies')} onClick={() => { setTab('companies'); setSearch(''); setPersonSort(null); }}>Companies</button>
+          <button style={tabBtn(tab === 'rfq')}       onClick={() => setTab('rfq')}>RFQ</button>
+          <button style={tabBtn(tab === 'quotes')}    onClick={() => setTab('quotes')}>Quotes</button>
         </div>
-        <div style={{ display: 'flex', gap: 10, alignItems: 'center', paddingBottom: 4 }}>
-          <input
-            value={search}
-            onChange={e => setSearch(e.target.value)}
-            placeholder={`Search ${tab}…`}
-            style={{ padding: '6px 10px', borderRadius: 4, border: `1px solid ${C.borderMd}`, background: C.surface, fontFamily: FF, fontSize: 12, color: C.text, outline: 'none', width: 200 }}
-          />
-          <button
-            onClick={() => setImportModal(true)}
-            style={{ padding: '7px 14px', borderRadius: 4, border: `1px solid ${C.borderMd}`, background: C.surface, color: C.sub, fontFamily: FF, fontWeight: 700, fontSize: 12, cursor: 'pointer', whiteSpace: 'nowrap' }}
-          >
-            Import
-          </button>
-          {tab === 'persons' ? (
-            <button onClick={() => setPersonModal(emptyPerson())} style={{ padding: '7px 16px', borderRadius: 4, border: 'none', background: C.green, color: '#fff', fontFamily: FF, fontWeight: 700, fontSize: 12, cursor: 'pointer', whiteSpace: 'nowrap' }}>+ Person</button>
-          ) : (
-            <button onClick={() => setCompanyModal(emptyCompany())} style={{ padding: '7px 16px', borderRadius: 4, border: 'none', background: C.green, color: '#fff', fontFamily: FF, fontWeight: 700, fontSize: 12, cursor: 'pointer', whiteSpace: 'nowrap' }}>+ Company</button>
-          )}
-        </div>
+        {(tab === 'persons' || tab === 'companies') && (
+          <div style={{ display: 'flex', gap: 10, alignItems: 'center', paddingBottom: 4 }}>
+            <input
+              value={search}
+              onChange={e => setSearch(e.target.value)}
+              placeholder={`Search ${tab}…`}
+              style={{ padding: '6px 10px', borderRadius: 4, border: `1px solid ${C.borderMd}`, background: C.surface, fontFamily: FF, fontSize: 12, color: C.text, outline: 'none', width: 200 }}
+            />
+            <button
+              onClick={() => setImportModal(true)}
+              style={{ padding: '7px 14px', borderRadius: 4, border: `1px solid ${C.borderMd}`, background: C.surface, color: C.sub, fontFamily: FF, fontWeight: 700, fontSize: 12, cursor: 'pointer', whiteSpace: 'nowrap' }}
+            >
+              Import
+            </button>
+            {tab === 'persons' ? (
+              <button onClick={() => setPersonModal(emptyPerson())} style={{ padding: '7px 16px', borderRadius: 4, border: 'none', background: C.green, color: '#fff', fontFamily: FF, fontWeight: 700, fontSize: 12, cursor: 'pointer', whiteSpace: 'nowrap' }}>+ Person</button>
+            ) : (
+              <button onClick={() => setCompanyModal(emptyCompany())} style={{ padding: '7px 16px', borderRadius: 4, border: 'none', background: C.green, color: '#fff', fontFamily: FF, fontWeight: 700, fontSize: 12, cursor: 'pointer', whiteSpace: 'nowrap' }}>+ Company</button>
+            )}
+          </div>
+        )}
       </div>
 
       {/* ── Table */}
+      {(tab === 'persons' || tab === 'companies') && (
       <div style={{ background: C.surface, border: `1px solid ${C.border}`, borderTop: 'none', borderRadius: '0 0 8px 8px' }}>
 
         {/* Persons table */}
@@ -1069,6 +1076,7 @@ const CrmBoard: React.FC = () => {
           }
         </div>
       </div>
+      )}
 
       {/* ── Modals */}
       {personModal  && <PersonModal  initial={personModal}  companies={companies} onSave={savePerson}  onClose={() => setPersonModal(null)}  />}
