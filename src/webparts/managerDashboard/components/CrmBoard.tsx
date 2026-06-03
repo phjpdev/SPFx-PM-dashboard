@@ -1,6 +1,6 @@
 import * as React from 'react';
 import { runCrmImport } from './crmImport';
-import type { CrmPhone, CrmEmail, CrmPerson, CrmCompany, CrmActivity, CrmActivityType } from './crmTypes';
+import type { CrmPhone, CrmEmail, CrmPerson, CrmCompany, CrmActivity, CrmActivityType, CrmAttachment } from './crmTypes';
 
 export type { CrmPerson, CrmCompany, CrmActivity } from './crmTypes';
 
@@ -254,7 +254,21 @@ const emptyActivity = (): CrmActivity => ({
   done: false,
 });
 
-const normalizePerson = (p: CrmPerson): CrmPerson => ({ ...p, activities: p.activities ?? [] });
+const normalizePerson = (p: CrmPerson): CrmPerson => ({
+  ...p,
+  activities: (p.activities ?? []).map(a => (a.id ? a : { ...a, id: uid() })),
+  attachments: (p.attachments ?? []).map(a => (a.id ? a : { ...a, id: uid() })),
+});
+
+const isImageName = (name: string): boolean => /\.(png|jpe?g|gif|webp|bmp|svg)$/i.test(name);
+
+const fileToAttachment = (file: File): Promise<CrmAttachment> =>
+  new Promise((resolve, reject) => {
+    const reader = new FileReader();
+    reader.onload = () => resolve({ id: uid(), name: file.name, dataUrl: reader.result as string });
+    reader.onerror = () => reject(reader.error);
+    reader.readAsDataURL(file);
+  });
 
 const loadLS   = <T,>(k: string, fb: T): T => { try { const v = localStorage.getItem(k); return v ? (JSON.parse(v) as T) : fb; } catch { return fb; } };
 const firstPhone = (arr: CrmPhone[]): string => { const p = arr.find(x => x.value); return p ? `${p.cc || DEFAULT_CC} ${p.value}` : '—'; };
@@ -266,7 +280,7 @@ const mapsUrl = (address: string): string =>
 const emptyPhone   = (): CrmPhone   => ({ value: '', type: 'Work', cc: DEFAULT_CC });
 const emptyPerson  = (): CrmPerson  => ({
   id: uid(), name: '', organizationId: '', position: '',
-  phones: [emptyPhone()], emails: [{ value: '', type: 'Work' }], activities: [],
+  phones: [emptyPhone()], emails: [{ value: '', type: 'Work' }], activities: [], attachments: [],
 });
 const emptyCompany = (): CrmCompany => ({ id: uid(), name: '', labels: '', address: '', phones: [emptyPhone()], emails: [{ value: '', type: 'Work' }] });
 
@@ -348,7 +362,7 @@ const AddressSearch: React.FC<{ value: string; onChange: (v: string) => void }> 
 // ── Modal wrapper (light) ─────────────────────────────────────────
 const Modal: React.FC<{ title: string; onClose: () => void; children: React.ReactNode }> = ({ title, onClose, children }) => (
   <div style={{ position: 'fixed', inset: 0, background: 'rgba(0,0,0,.45)', zIndex: 1000, display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
-    <div style={{ background: C.surface, borderRadius: 8, width: 500, maxHeight: '90vh', overflowY: 'auto', boxShadow: '0 12px 40px rgba(0,0,0,.18)', border: `1px solid ${C.border}` }}>
+    <div style={{ background: C.surface, borderRadius: 8, width: 520, maxHeight: '90vh', overflowY: 'auto', boxShadow: '0 12px 40px rgba(0,0,0,.18)', border: `1px solid ${C.border}` }}>
       <div style={{ padding: '14px 20px', borderBottom: `1px solid ${C.border}`, display: 'flex', justifyContent: 'space-between', alignItems: 'center', background: C.thBg, borderRadius: '8px 8px 0 0' }}>
         <span style={{ fontFamily: FF, fontWeight: 700, fontSize: 13, color: C.text, letterSpacing: '.04em' }}>{title}</span>
         <button onClick={onClose} style={{ background: 'none', border: 'none', color: C.muted, cursor: 'pointer', fontSize: 20, lineHeight: 1, padding: 0 }}>×</button>
@@ -432,27 +446,47 @@ const ModalFooter: React.FC<{ onCancel: () => void; onSave: () => void }> = ({ o
 // ── Person Modal ──────────────────────────────────────────────────
 const PersonModal: React.FC<{ initial: CrmPerson; companies: CrmCompany[]; onSave: (p: CrmPerson) => void; onClose: () => void }> = ({ initial, companies, onSave, onClose }) => {
   const [d, setD] = React.useState<CrmPerson>(() => normalizePerson(initial));
-  const [draft, setDraft] = React.useState<CrmActivity>(() => emptyActivity());
   const set = <K extends keyof CrmPerson>(k: K, v: CrmPerson[K]): void => setD(p => ({ ...p, [k]: v }));
-
-  React.useEffect(() => {
-    setD(normalizePerson(initial));
-    setDraft(emptyActivity());
-  }, [initial.id]);
-
-  const setDraftField = <K extends keyof CrmActivity>(k: K, v: CrmActivity[K]): void =>
-    setDraft(a => ({ ...a, [k]: v }));
-
-  const addActivity = (): void => {
-    setD(p => ({ ...p, activities: [{ ...draft, id: uid() }, ...(p.activities ?? [])] }));
-    setDraft(emptyActivity());
-  };
-
-  const removeActivity = (id: string): void => {
-    setD(p => ({ ...p, activities: (p.activities ?? []).filter(a => a.id !== id) }));
-  };
-
+  const activities = d.activities ?? [];
+  const attachments = d.attachments ?? [];
+  const attachInputRef = React.useRef<HTMLInputElement>(null);
   const row2: React.CSSProperties = { display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 10 };
+
+  React.useEffect(() => { setD(normalizePerson(initial)); }, [initial.id]);
+
+  const patchActivity = (idx: number, patch: Partial<CrmActivity>): void => {
+    const next = [...activities];
+    next[idx] = { ...next[idx], ...patch };
+    set('activities', next);
+  };
+
+  const addActivityRow = (): void => set('activities', [...activities, emptyActivity()]);
+  const removeActivityRow = (idx: number): void => set('activities', activities.filter((_, i) => i !== idx));
+
+  const addAttachments = async (files: FileList | null): Promise<void> => {
+    if (!files?.length) return;
+    const added = await Promise.all(Array.from(files).map(fileToAttachment));
+    setD(p => ({ ...p, attachments: [...(p.attachments ?? []), ...added] }));
+  };
+
+  const removeAttachment = (id: string): void => {
+    setD(p => ({ ...p, attachments: (p.attachments ?? []).filter(a => a.id !== id) }));
+  };
+
+  const actDelBtn: React.CSSProperties = {
+    background: 'transparent', border: `1px solid ${C.red}`, color: C.red, borderRadius: 4,
+    width: 26, height: 26, fontSize: 13, cursor: 'pointer', fontWeight: 700, flexShrink: 0,
+  };
+
+  const addRowBtn: React.CSSProperties = {
+    fontFamily: FF, fontSize: 11, fontWeight: 600, padding: '6px 14px', background: 'transparent',
+    border: `1px dashed ${C.borderMd}`, color: C.muted, borderRadius: 5, cursor: 'pointer', marginTop: 4,
+  };
+
+  const attachZoneBtn: React.CSSProperties = {
+    ...mi, cursor: 'pointer', background: C.thBg, border: `1px dashed ${C.borderMd}`,
+    padding: '8px 12px', fontSize: 12, color: C.muted, width: '100%', textAlign: 'left',
+  };
 
   return (
     <Modal title={initial.name ? 'Edit Person' : 'Add Person'} onClose={onClose}>
@@ -495,86 +529,113 @@ const PersonModal: React.FC<{ initial: CrmPerson; companies: CrmCompany[]; onSav
         <div style={{ fontFamily: FF, fontWeight: 700, fontSize: 11.5, letterSpacing: '.06em', textTransform: 'uppercase', color: C.text, marginBottom: 12 }}>
           Activity Log
         </div>
-        <div style={row2}>
-          <div>
-            <label style={ml}>Date</label>
-            <input type="date" value={draft.date} onChange={e => setDraftField('date', e.target.value)} style={mi} />
-          </div>
-          <div>
-            <label style={ml}>Type</label>
-            <select value={draft.type} onChange={e => setDraftField('type', e.target.value as CrmActivityType)} style={mi}>
-              {ACTIVITY_TYPES.map(t => <option key={t} value={t}>{t}</option>)}
-            </select>
-          </div>
-        </div>
-        <div style={{ marginTop: 10 }}>
-          <label style={ml}>Notes</label>
-          <textarea
-            value={draft.notes}
-            onChange={e => setDraftField('notes', e.target.value)}
-            placeholder="What was discussed…"
-            rows={3}
-            style={{ ...mi, resize: 'vertical', minHeight: 64 }}
-          />
-        </div>
-        <div style={{ ...row2, marginTop: 10, alignItems: 'end' }}>
-          <div>
-            <label style={ml}>Follow up date</label>
-            <input type="date" value={draft.followUpDate} onChange={e => setDraftField('followUpDate', e.target.value)} style={mi} />
-          </div>
-          <label style={{ display: 'flex', alignItems: 'center', gap: 8, fontFamily: FF, fontSize: 12.5, color: C.text, cursor: 'pointer', paddingBottom: 8 }}>
-            <input
-              type="checkbox"
-              checked={draft.done}
-              onChange={e => setDraftField('done', e.target.checked)}
-              style={{ width: 16, height: 16, accentColor: C.green, cursor: 'pointer' }}
-            />
-            Mark as done
-          </label>
-        </div>
-        <button
-          type="button"
-          onClick={addActivity}
-          style={{ marginTop: 10, padding: '6px 14px', borderRadius: 4, border: `1px solid ${C.greenBd}`, background: C.greenBg, color: C.green, fontFamily: FF, fontWeight: 700, fontSize: 11.5, cursor: 'pointer' }}
-        >
-          + Add log entry
-        </button>
 
-        {(d.activities ?? []).length > 0 && (
-          <div style={{ marginTop: 14, maxHeight: 160, overflowY: 'auto', border: `1px solid ${C.border}`, borderRadius: 4 }}>
-            {(d.activities ?? []).map(a => (
-              <div
-                key={a.id}
-                style={{
-                  padding: '10px 12px', borderBottom: `1px solid ${C.border}`, fontFamily: FF, fontSize: 12,
-                  opacity: a.done ? 0.65 : 1, background: a.done ? C.thBg : C.surface,
-                }}
-              >
-                <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', gap: 8 }}>
-                  <div style={{ flex: 1, minWidth: 0 }}>
-                    <div style={{ fontWeight: 700, color: C.text, textDecoration: a.done ? 'line-through' : 'none' }}>
-                      {a.date} · {a.type}{a.done ? ' ✓' : ''}
-                    </div>
-                    {a.notes && <div style={{ color: C.sub, marginTop: 4, lineHeight: 1.4, whiteSpace: 'pre-wrap' }}>{a.notes}</div>}
-                    {a.followUpDate && (
-                      <div style={{ color: C.muted, marginTop: 4, fontSize: 11 }}>
-                        Follow up: {a.followUpDate}
-                      </div>
-                    )}
-                  </div>
-                  <button
-                    type="button"
-                    onClick={() => removeActivity(a.id)}
-                    style={{ background: 'none', border: 'none', color: C.muted, cursor: 'pointer', fontSize: 16, lineHeight: 1, padding: 0 }}
-                    title="Remove entry"
-                  >
-                    ×
-                  </button>
-                </div>
+        {activities.map((a, idx) => (
+          <div
+            key={a.id}
+            style={{
+              marginBottom: 14, paddingBottom: 14,
+              borderBottom: idx < activities.length - 1 ? `1px solid ${C.border}` : 'none',
+              opacity: a.done ? 0.85 : 1,
+            }}
+          >
+            {activities.length > 0 && (
+              <div style={{ display: 'flex', justifyContent: 'flex-end', marginBottom: 6 }}>
+                <button type="button" onClick={() => removeActivityRow(idx)} style={actDelBtn} title="Remove activity">×</button>
               </div>
-            ))}
+            )}
+            <div style={row2}>
+              <div>
+                <label style={ml}>Date</label>
+                <input type="date" value={a.date} onChange={e => patchActivity(idx, { date: e.target.value })} style={mi} />
+              </div>
+              <div>
+                <label style={ml}>Type</label>
+                <select value={a.type} onChange={e => patchActivity(idx, { type: e.target.value as CrmActivityType })} style={mi}>
+                  {ACTIVITY_TYPES.map(t => <option key={t} value={t}>{t}</option>)}
+                </select>
+              </div>
+            </div>
+            <div style={{ marginTop: 10 }}>
+              <label style={ml}>Notes</label>
+              <textarea
+                value={a.notes}
+                onChange={e => patchActivity(idx, { notes: e.target.value })}
+                placeholder="What was discussed…"
+                rows={3}
+                style={{ ...mi, resize: 'vertical', minHeight: 64 }}
+              />
+            </div>
+            <div style={{ ...row2, marginTop: 10, alignItems: 'end' }}>
+              <div>
+                <label style={ml}>Follow up date</label>
+                <input type="date" value={a.followUpDate} onChange={e => patchActivity(idx, { followUpDate: e.target.value })} style={mi} />
+              </div>
+              <label style={{ display: 'flex', alignItems: 'center', gap: 8, fontFamily: FF, fontSize: 12.5, color: C.text, cursor: 'pointer', paddingBottom: 8 }}>
+                <input
+                  type="checkbox"
+                  checked={a.done}
+                  onChange={e => patchActivity(idx, { done: e.target.checked })}
+                  style={{ width: 16, height: 16, accentColor: C.green, cursor: 'pointer' }}
+                />
+                Mark as done
+              </label>
+            </div>
           </div>
+        ))}
+
+        {activities.length < 20 && (
+          <button type="button" onClick={addActivityRow} style={addRowBtn}>+ Activity</button>
         )}
+
+        <div style={{ marginTop: 18, paddingTop: 14, borderTop: `1px solid ${C.border}` }}>
+          <label style={{ ...ml, marginBottom: 6 }}>Note Attachments (images / screenshots)</label>
+          <input
+            ref={attachInputRef}
+            type="file"
+            accept="image/*"
+            multiple
+            style={{ display: 'none' }}
+            onChange={e => { void addAttachments(e.target.files); e.target.value = ''; }}
+          />
+          <button type="button" onClick={() => attachInputRef.current?.click()} style={attachZoneBtn}>
+            + Click to attach pictures or screenshots…
+          </button>
+          {attachments.length > 0 && (
+            <div style={{ marginTop: 10, display: 'flex', flexWrap: 'wrap', gap: 10 }}>
+              {attachments.map(att => {
+                const isImg = att.dataUrl.startsWith('data:image') || isImageName(att.name);
+                return (
+                  <div
+                    key={att.id}
+                    style={{
+                      position: 'relative', border: `1px solid ${C.greenBd}`, borderRadius: 4,
+                      background: C.greenBg, padding: 4, width: isImg ? 96 : 'auto', maxWidth: 220,
+                    }}
+                  >
+                    {isImg ? (
+                      <img src={att.dataUrl} alt={att.name} style={{ width: 88, height: 88, objectFit: 'cover', borderRadius: 2, display: 'block' }} />
+                    ) : (
+                      <span style={{ display: 'block', padding: '6px 10px', fontSize: 11.5, color: C.green, fontFamily: FF }}>{att.name}</span>
+                    )}
+                    <button
+                      type="button"
+                      onClick={() => removeAttachment(att.id)}
+                      title="Remove"
+                      style={{
+                        position: 'absolute', top: 2, right: 2, background: 'rgba(192,57,43,.9)', border: 'none',
+                        color: '#fff', borderRadius: 3, width: 18, height: 18, fontSize: 12, lineHeight: 1,
+                        cursor: 'pointer', fontWeight: 700,
+                      }}
+                    >
+                      ×
+                    </button>
+                  </div>
+                );
+              })}
+            </div>
+          )}
+        </div>
       </div>
 
       <ModalFooter onCancel={onClose} onSave={() => { if (d.name.trim()) onSave(normalizePerson(d)); }} />
