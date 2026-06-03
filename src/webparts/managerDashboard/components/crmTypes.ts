@@ -37,3 +37,30 @@ export interface CrmCompany {
   phones: CrmPhone[];
   emails: CrmEmail[];
 }
+
+export type CrmRfqDiscipline = 'Steel' | 'Concrete' | 'Both';
+export type CrmRfqStage =
+  | 'New Enquiry'
+  | 'Under Review'
+  | 'Ready to Quote'
+  | 'Won'
+  | 'Declined';
+
+export interface CrmRfq {
+  id: string;
+  rfqNum: string;
+  dateReceived: string;
+  personId: string;
+  organizationId: string;
+  projectTitle: string;
+  projectAddress: string;
+  discipline: CrmRfqDiscipline;
+  quoteRequiredBy: string;
+  projectValue: number;
+  createQuoteXero: boolean;
+  relatedRfqId: string;
+  notes: string;
+  source: string;
+  stage: CrmRfqStage;
+  assignedTo: string;
+}
