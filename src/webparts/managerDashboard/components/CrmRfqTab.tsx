@@ -334,26 +334,25 @@ const CrmRfqTab: React.FC<{ persons: CrmPerson[]; companies: CrmCompany[] }> = (
         <KpiCard label="Pipeline Value" accent={C.purple} value={fmtMoney(stats.pipeline)} sub="active enquiries" />
       </div>
 
-      {/* Toolbar — search, filter, and + RFQ on one row */}
-      <div style={{ display: 'flex', alignItems: 'center', gap: 10, flexWrap: 'nowrap', paddingBottom: 12, width: '100%' }}>
+      {/* Toolbar — search & filter left, + RFQ right */}
+      <div style={{ display: 'flex', alignItems: 'center', gap: 10, flexWrap: 'nowrap', paddingBottom: 12, width: '100%', boxSizing: 'border-box' }}>
         <input
           value={search}
           onChange={e => setSearch(e.target.value)}
           placeholder="Search RFQs…"
-          style={{ padding: '7px 12px', borderRadius: 4, border: `1px solid ${C.borderMd}`, background: C.surface, fontFamily: FF, fontSize: 12, width: 200, minWidth: 140, flexShrink: 1, outline: 'none' }}
+          style={{ padding: '7px 12px', borderRadius: 4, border: `1px solid ${C.borderMd}`, background: C.surface, fontFamily: FF, fontSize: 12, width: 200, flexShrink: 0, outline: 'none', boxSizing: 'border-box' }}
         />
         <select
           value={stageFilter}
           onChange={e => setStageFilter(e.target.value)}
-          style={{ padding: '7px 12px', borderRadius: 4, border: `1px solid ${C.borderMd}`, background: C.surface, fontFamily: FF, fontSize: 12, color: C.text, flexShrink: 0, minWidth: 130 }}
+          style={{ padding: '7px 10px', borderRadius: 4, border: `1px solid ${C.borderMd}`, background: C.surface, fontFamily: FF, fontSize: 12, color: C.text, width: 150, maxWidth: 150, flexShrink: 0, boxSizing: 'border-box' }}
         >
           <option value="all">All stages</option>
           {STAGES.map(s => <option key={s} value={s}>{s}</option>)}
         </select>
-        <div style={{ flex: 1, minWidth: 8 }} />
         <button
           onClick={() => setModal(emptyRfq(rfqs))}
-          style={{ padding: '8px 18px', borderRadius: 4, border: 'none', background: C.green, color: '#fff', fontFamily: FF, fontWeight: 700, fontSize: 12, cursor: 'pointer', whiteSpace: 'nowrap', flexShrink: 0 }}
+          style={{ marginLeft: 'auto', padding: '8px 18px', borderRadius: 4, border: 'none', background: C.green, color: '#fff', fontFamily: FF, fontWeight: 700, fontSize: 12, cursor: 'pointer', whiteSpace: 'nowrap', flexShrink: 0 }}
         >
           + RFQ
         </button>
