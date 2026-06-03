@@ -1,8 +1,8 @@
 import * as React from 'react';
 import { runCrmImport } from './crmImport';
-import type { CrmPhone, CrmEmail, CrmPerson, CrmCompany } from './crmTypes';
+import type { CrmPhone, CrmEmail, CrmPerson, CrmCompany, CrmActivity, CrmActivityType } from './crmTypes';
 
-export type { CrmPerson, CrmCompany } from './crmTypes';
+export type { CrmPerson, CrmCompany, CrmActivity } from './crmTypes';
 
 // ── Constants ─────────────────────────────────────────────────────
 const PHONE_TYPES  = ['Work', 'Home', 'Mobile', 'Other'];
@@ -235,6 +235,25 @@ const C = {
 
 // ── Helpers ───────────────────────────────────────────────────────
 const uid      = (): string    => `${Date.now()}-${Math.random().toString(36).substr(2, 5)}`;
+
+const ACTIVITY_TYPES: CrmActivityType[] = ['Phone call', 'Email', 'Text', 'In person'];
+
+const todayIso = (): string => {
+  const t = new Date();
+  return `${t.getFullYear()}-${String(t.getMonth() + 1).padStart(2, '0')}-${String(t.getDate()).padStart(2, '0')}`;
+};
+
+const emptyActivity = (): CrmActivity => ({
+  id: uid(),
+  date: todayIso(),
+  type: 'Phone call',
+  notes: '',
+  followUpDate: '',
+  done: false,
+});
+
+const normalizePerson = (p: CrmPerson): CrmPerson => ({ ...p, activities: p.activities ?? [] });
+
 const loadLS   = <T,>(k: string, fb: T): T => { try { const v = localStorage.getItem(k); return v ? (JSON.parse(v) as T) : fb; } catch { return fb; } };
 const firstPhone = (arr: CrmPhone[]): string => { const p = arr.find(x => x.value); return p ? `${p.cc || DEFAULT_CC} ${p.value}` : '—'; };
 const firstEmail = (arr: CrmEmail[]): string => arr.find(x => x.value)?.value || '—';
@@ -243,7 +262,10 @@ const mapsUrl = (address: string): string =>
   `https://www.google.com/maps/search/?api=1&query=${encodeURIComponent(address)}`;
 
 const emptyPhone   = (): CrmPhone   => ({ value: '', type: 'Work', cc: DEFAULT_CC });
-const emptyPerson  = (): CrmPerson  => ({ id: uid(), name: '', organizationId: '', position: '', phones: [emptyPhone()], emails: [{ value: '', type: 'Work' }] });
+const emptyPerson  = (): CrmPerson  => ({
+  id: uid(), name: '', organizationId: '', position: '',
+  phones: [emptyPhone()], emails: [{ value: '', type: 'Work' }], activities: [],
+});
 const emptyCompany = (): CrmCompany => ({ id: uid(), name: '', labels: '', address: '', phones: [emptyPhone()], emails: [{ value: '', type: 'Work' }] });
 
 // ── Shared modal input style ──────────────────────────────────────
@@ -324,7 +346,7 @@ const AddressSearch: React.FC<{ value: string; onChange: (v: string) => void }> 
 // ── Modal wrapper (light) ─────────────────────────────────────────
 const Modal: React.FC<{ title: string; onClose: () => void; children: React.ReactNode }> = ({ title, onClose, children }) => (
   <div style={{ position: 'fixed', inset: 0, background: 'rgba(0,0,0,.45)', zIndex: 1000, display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
-    <div style={{ background: C.surface, borderRadius: 8, width: 460, maxHeight: '90vh', overflowY: 'auto', boxShadow: '0 12px 40px rgba(0,0,0,.18)', border: `1px solid ${C.border}` }}>
+    <div style={{ background: C.surface, borderRadius: 8, width: 500, maxHeight: '90vh', overflowY: 'auto', boxShadow: '0 12px 40px rgba(0,0,0,.18)', border: `1px solid ${C.border}` }}>
       <div style={{ padding: '14px 20px', borderBottom: `1px solid ${C.border}`, display: 'flex', justifyContent: 'space-between', alignItems: 'center', background: C.thBg, borderRadius: '8px 8px 0 0' }}>
         <span style={{ fontFamily: FF, fontWeight: 700, fontSize: 13, color: C.text, letterSpacing: '.04em' }}>{title}</span>
         <button onClick={onClose} style={{ background: 'none', border: 'none', color: C.muted, cursor: 'pointer', fontSize: 20, lineHeight: 1, padding: 0 }}>×</button>
@@ -407,8 +429,29 @@ const ModalFooter: React.FC<{ onCancel: () => void; onSave: () => void }> = ({ o
 
 // ── Person Modal ──────────────────────────────────────────────────
 const PersonModal: React.FC<{ initial: CrmPerson; companies: CrmCompany[]; onSave: (p: CrmPerson) => void; onClose: () => void }> = ({ initial, companies, onSave, onClose }) => {
-  const [d, setD] = React.useState<CrmPerson>(initial);
+  const [d, setD] = React.useState<CrmPerson>(() => normalizePerson(initial));
+  const [draft, setDraft] = React.useState<CrmActivity>(() => emptyActivity());
   const set = <K extends keyof CrmPerson>(k: K, v: CrmPerson[K]): void => setD(p => ({ ...p, [k]: v }));
+
+  React.useEffect(() => {
+    setD(normalizePerson(initial));
+    setDraft(emptyActivity());
+  }, [initial.id]);
+
+  const setDraftField = <K extends keyof CrmActivity>(k: K, v: CrmActivity[K]): void =>
+    setDraft(a => ({ ...a, [k]: v }));
+
+  const addActivity = (): void => {
+    setD(p => ({ ...p, activities: [{ ...draft, id: uid() }, ...(p.activities ?? [])] }));
+    setDraft(emptyActivity());
+  };
+
+  const removeActivity = (id: string): void => {
+    setD(p => ({ ...p, activities: (p.activities ?? []).filter(a => a.id !== id) }));
+  };
+
+  const row2: React.CSSProperties = { display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 10 };
+
   return (
     <Modal title={initial.name ? 'Edit Person' : 'Add Person'} onClose={onClose}>
       <div style={{ marginBottom: 14 }}>
@@ -445,7 +488,94 @@ const PersonModal: React.FC<{ initial: CrmPerson; companies: CrmCompany[]; onSav
       <MultiField items={d.phones} types={PHONE_TYPES} addLabel="phone" placeholder="Phone number" isPhone onChange={v => set('phones', v)} />
       <label style={ml}>Email</label>
       <MultiField items={d.emails} types={EMAIL_TYPES} addLabel="email" placeholder="Email address" onChange={v => set('emails', v)} />
-      <ModalFooter onCancel={onClose} onSave={() => { if (d.name.trim()) onSave(d); }} />
+
+      <div style={{ marginTop: 20, paddingTop: 16, borderTop: `1px solid ${C.border}` }}>
+        <div style={{ fontFamily: FF, fontWeight: 700, fontSize: 11.5, letterSpacing: '.06em', textTransform: 'uppercase', color: C.text, marginBottom: 12 }}>
+          Activity Log
+        </div>
+        <div style={row2}>
+          <div>
+            <label style={ml}>Date</label>
+            <input type="date" value={draft.date} onChange={e => setDraftField('date', e.target.value)} style={mi} />
+          </div>
+          <div>
+            <label style={ml}>Type</label>
+            <select value={draft.type} onChange={e => setDraftField('type', e.target.value as CrmActivityType)} style={mi}>
+              {ACTIVITY_TYPES.map(t => <option key={t} value={t}>{t}</option>)}
+            </select>
+          </div>
+        </div>
+        <div style={{ marginTop: 10 }}>
+          <label style={ml}>Notes</label>
+          <textarea
+            value={draft.notes}
+            onChange={e => setDraftField('notes', e.target.value)}
+            placeholder="What was discussed…"
+            rows={3}
+            style={{ ...mi, resize: 'vertical', minHeight: 64 }}
+          />
+        </div>
+        <div style={{ ...row2, marginTop: 10, alignItems: 'end' }}>
+          <div>
+            <label style={ml}>Follow up date</label>
+            <input type="date" value={draft.followUpDate} onChange={e => setDraftField('followUpDate', e.target.value)} style={mi} />
+          </div>
+          <label style={{ display: 'flex', alignItems: 'center', gap: 8, fontFamily: FF, fontSize: 12.5, color: C.text, cursor: 'pointer', paddingBottom: 8 }}>
+            <input
+              type="checkbox"
+              checked={draft.done}
+              onChange={e => setDraftField('done', e.target.checked)}
+              style={{ width: 16, height: 16, accentColor: C.green, cursor: 'pointer' }}
+            />
+            Mark as done
+          </label>
+        </div>
+        <button
+          type="button"
+          onClick={addActivity}
+          style={{ marginTop: 10, padding: '6px 14px', borderRadius: 4, border: `1px solid ${C.greenBd}`, background: C.greenBg, color: C.green, fontFamily: FF, fontWeight: 700, fontSize: 11.5, cursor: 'pointer' }}
+        >
+          + Add log entry
+        </button>
+
+        {(d.activities ?? []).length > 0 && (
+          <div style={{ marginTop: 14, maxHeight: 160, overflowY: 'auto', border: `1px solid ${C.border}`, borderRadius: 4 }}>
+            {(d.activities ?? []).map(a => (
+              <div
+                key={a.id}
+                style={{
+                  padding: '10px 12px', borderBottom: `1px solid ${C.border}`, fontFamily: FF, fontSize: 12,
+                  opacity: a.done ? 0.65 : 1, background: a.done ? C.thBg : C.surface,
+                }}
+              >
+                <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', gap: 8 }}>
+                  <div style={{ flex: 1, minWidth: 0 }}>
+                    <div style={{ fontWeight: 700, color: C.text, textDecoration: a.done ? 'line-through' : 'none' }}>
+                      {a.date} · {a.type}{a.done ? ' ✓' : ''}
+                    </div>
+                    {a.notes && <div style={{ color: C.sub, marginTop: 4, lineHeight: 1.4, whiteSpace: 'pre-wrap' }}>{a.notes}</div>}
+                    {a.followUpDate && (
+                      <div style={{ color: C.muted, marginTop: 4, fontSize: 11 }}>
+                        Follow up: {a.followUpDate}
+                      </div>
+                    )}
+                  </div>
+                  <button
+                    type="button"
+                    onClick={() => removeActivity(a.id)}
+                    style={{ background: 'none', border: 'none', color: C.muted, cursor: 'pointer', fontSize: 16, lineHeight: 1, padding: 0 }}
+                    title="Remove entry"
+                  >
+                    ×
+                  </button>
+                </div>
+              </div>
+            ))}
+          </div>
+        )}
+      </div>
+
+      <ModalFooter onCancel={onClose} onSave={() => { if (d.name.trim()) onSave(normalizePerson(d)); }} />
     </Modal>
   );
 };
@@ -764,7 +894,7 @@ const CrmBoard: React.FC = () => {
                     </Td>
                     <Td><span style={{ color: C.sub, fontWeight: 600 }} title={firstPhone(p.phones)}>{firstPhone(p.phones)}</span></Td>
                     <Td><span style={{ color: C.sub, fontWeight: 600 }} title={firstEmail(p.emails)}>{firstEmail(p.emails)}</span></Td>
-                    <ActionCell onEdit={() => setPersonModal({ ...p })} onDel={() => deletePerson(p.id)} />
+                    <ActionCell onEdit={() => setPersonModal(normalizePerson(p))} onDel={() => deletePerson(p.id)} />
                   </tr>
                 ))
               }
