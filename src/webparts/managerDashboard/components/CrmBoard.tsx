@@ -701,6 +701,41 @@ const Th: React.FC<{ label: string; w?: string | number; center?: boolean }> = (
   <th style={thStyle({ w, center })}>{label}</th>
 );
 
+type SortDir = 'asc' | 'desc';
+type PersonSortKey = 'name' | 'company' | 'position' | 'location' | 'phone' | 'email';
+type CompanySortKey = 'name' | 'labels' | 'phone' | 'email' | 'address';
+
+const cmpAlpha = (a: string, b: string, dir: SortDir): number => {
+  const r = a.localeCompare(b, undefined, { sensitivity: 'base', numeric: true });
+  return dir === 'asc' ? r : -r;
+};
+
+const SortTh: React.FC<{
+  label: string;
+  active: boolean;
+  dir: SortDir;
+  onClick: () => void;
+  center?: boolean;
+}> = ({ label, active, dir, onClick, center }) => (
+  <th
+    onClick={onClick}
+    title="Click to sort A–Z"
+    style={{
+      ...thStyle({ center }),
+      cursor: 'pointer',
+      userSelect: 'none',
+      color: active ? C.green : C.sub,
+    }}
+  >
+    <span style={{ display: 'inline-flex', alignItems: 'center', gap: 4 }}>
+      {label}
+      <span style={{ fontSize: 9, lineHeight: 1, opacity: active ? 1 : 0.4 }} aria-hidden>
+        {active ? (dir === 'asc' ? '▲' : '▼') : '↕'}
+      </span>
+    </span>
+  </th>
+);
+
 const tdBase = (muted?: boolean, mono?: boolean): React.CSSProperties => ({
   padding: '8px 8px',
   fontFamily: mono ? 'monospace' : FF,
@@ -741,6 +776,8 @@ const CrmBoard: React.FC = () => {
   const [companyModal, setCompanyModal] = React.useState<CrmCompany | null>(null);
   const [importModal, setImportModal]   = React.useState(false);
   const [search, setSearch]             = React.useState('');
+  const [personSort, setPersonSort]     = React.useState<{ key: PersonSortKey; dir: SortDir } | null>(null);
+  const [companySort, setCompanySort] = React.useState<{ key: CompanySortKey; dir: SortDir } | null>(null);
 
   React.useEffect(() => { localStorage.setItem(LS_PERSONS,   JSON.stringify(persons));   }, [persons]);
   React.useEffect(() => { localStorage.setItem(LS_COMPANIES, JSON.stringify(companies)); }, [companies]);
@@ -762,6 +799,58 @@ const CrmBoard: React.FC = () => {
   const q = search.toLowerCase();
   const visPersons  = persons.filter(p  => !q || p.name.toLowerCase().includes(q) || companyName(p.organizationId).toLowerCase().includes(q) || companyAddress(p.organizationId).toLowerCase().includes(q));
   const visCompanies = companies.filter(c => !q || c.name.toLowerCase().includes(q) || c.labels.toLowerCase().includes(q) || c.address.toLowerCase().includes(q));
+
+  const togglePersonSort = (key: PersonSortKey): void => {
+    setPersonSort(prev => (prev?.key === key
+      ? { key, dir: prev.dir === 'asc' ? 'desc' : 'asc' }
+      : { key, dir: 'asc' }));
+  };
+
+  const toggleCompanySort = (key: CompanySortKey): void => {
+    setCompanySort(prev => (prev?.key === key
+      ? { key, dir: prev.dir === 'asc' ? 'desc' : 'asc' }
+      : { key, dir: 'asc' }));
+  };
+
+  const personSortVal = (p: CrmPerson, key: PersonSortKey): string => {
+    switch (key) {
+      case 'name': return p.name;
+      case 'company': return companyName(p.organizationId);
+      case 'position': return p.position;
+      case 'location': return companyAddress(p.organizationId);
+      case 'phone': return firstPhone(p.phones);
+      case 'email': return firstEmail(p.emails);
+      default: return '';
+    }
+  };
+
+  const sortedPersons = React.useMemo(() => {
+    const list = [...visPersons];
+    if (!personSort) return list;
+    const { key, dir } = personSort;
+    list.sort((a, b) => cmpAlpha(personSortVal(a, key).toLowerCase(), personSortVal(b, key).toLowerCase(), dir));
+    return list;
+  }, [visPersons, personSort, companies]);
+
+  const sortedCompanies = React.useMemo(() => {
+    const list = [...visCompanies];
+    if (!companySort) return list;
+    const { key, dir } = companySort;
+    list.sort((a, b) => {
+      let av = '';
+      let bv = '';
+      switch (key) {
+        case 'name': av = a.name; bv = b.name; break;
+        case 'labels': av = a.labels; bv = b.labels; break;
+        case 'phone': av = firstPhone(a.phones); bv = firstPhone(b.phones); break;
+        case 'email': av = firstEmail(a.emails); bv = firstEmail(b.emails); break;
+        case 'address': av = a.address; bv = b.address; break;
+        default: break;
+      }
+      return cmpAlpha(av.toLowerCase(), bv.toLowerCase(), dir);
+    });
+    return list;
+  }, [visCompanies, companySort]);
 
   const tabBtn = (active: boolean): React.CSSProperties => ({
     fontFamily: FF, fontWeight: 700, fontSize: 11.5, letterSpacing: '.07em', textTransform: 'uppercase',
@@ -806,8 +895,8 @@ const CrmBoard: React.FC = () => {
       {/* ── Toolbar */}
       <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-end', marginBottom: 0, padding: '16px 0 0 0' }}>
         <div style={{ display: 'flex', gap: 0, borderBottom: `1px solid ${C.border}`, paddingBottom: 0 }}>
-          <button style={tabBtn(tab === 'persons')}   onClick={() => { setTab('persons');   setSearch(''); }}>Persons</button>
-          <button style={tabBtn(tab === 'companies')} onClick={() => { setTab('companies'); setSearch(''); }}>Companies</button>
+          <button style={tabBtn(tab === 'persons')}   onClick={() => { setTab('persons');   setSearch(''); setCompanySort(null); }}>Persons</button>
+          <button style={tabBtn(tab === 'companies')} onClick={() => { setTab('companies'); setSearch(''); setPersonSort(null); }}>Companies</button>
         </div>
         <div style={{ display: 'flex', gap: 10, alignItems: 'center', paddingBottom: 4 }}>
           <input
@@ -849,19 +938,19 @@ const CrmBoard: React.FC = () => {
             <thead>
               <tr>
                 <Th label="#" center />
-                <Th label="Name"     />
-                <Th label="Company"  />
-                <Th label="Position" />
-                <Th label="Location" />
-                <Th label="Phone"    />
-                <Th label="Email"    />
+                <SortTh label="Name"     active={personSort?.key === 'name'}     dir={personSort?.dir ?? 'asc'} onClick={() => togglePersonSort('name')} />
+                <SortTh label="Company"  active={personSort?.key === 'company'}  dir={personSort?.dir ?? 'asc'} onClick={() => togglePersonSort('company')} />
+                <SortTh label="Position" active={personSort?.key === 'position'} dir={personSort?.dir ?? 'asc'} onClick={() => togglePersonSort('position')} />
+                <SortTh label="Location" active={personSort?.key === 'location'} dir={personSort?.dir ?? 'asc'} onClick={() => togglePersonSort('location')} />
+                <SortTh label="Phone"    active={personSort?.key === 'phone'}    dir={personSort?.dir ?? 'asc'} onClick={() => togglePersonSort('phone')} />
+                <SortTh label="Email"    active={personSort?.key === 'email'}    dir={personSort?.dir ?? 'asc'} onClick={() => togglePersonSort('email')} />
                 <Th label="Actions"  />
               </tr>
             </thead>
             <tbody>
-              {visPersons.length === 0
+              {sortedPersons.length === 0
                 ? emptyRow(8, persons.length === 0 ? 'No persons yet — click + Person or Import to add data.' : 'No results match your search.')
-                : visPersons.map((p, idx) => (
+                : sortedPersons.map((p, idx) => (
                   <tr key={p.id}
                     onMouseEnter={e => { (e.currentTarget as HTMLTableRowElement).style.background = C.rowHover; }}
                     onMouseLeave={e => { (e.currentTarget as HTMLTableRowElement).style.background = 'transparent'; }}
@@ -917,18 +1006,18 @@ const CrmBoard: React.FC = () => {
             <thead>
               <tr>
                 <Th label="#" center />
-                <Th label="Company" />
-                <Th label="Labels"  />
-                <Th label="Phone"   />
-                <Th label="Email"   />
-                <Th label="Address" />
+                <SortTh label="Company" active={companySort?.key === 'name'}    dir={companySort?.dir ?? 'asc'} onClick={() => toggleCompanySort('name')} />
+                <SortTh label="Labels"  active={companySort?.key === 'labels'}  dir={companySort?.dir ?? 'asc'} onClick={() => toggleCompanySort('labels')} />
+                <SortTh label="Phone"   active={companySort?.key === 'phone'}   dir={companySort?.dir ?? 'asc'} onClick={() => toggleCompanySort('phone')} />
+                <SortTh label="Email"   active={companySort?.key === 'email'}   dir={companySort?.dir ?? 'asc'} onClick={() => toggleCompanySort('email')} />
+                <SortTh label="Address" active={companySort?.key === 'address'} dir={companySort?.dir ?? 'asc'} onClick={() => toggleCompanySort('address')} />
                 <Th label="Actions"  />
               </tr>
             </thead>
             <tbody>
-              {visCompanies.length === 0
+              {sortedCompanies.length === 0
                 ? emptyRow(7, companies.length === 0 ? 'No companies yet — click + Company to add one.' : 'No results match your search.')
-                : visCompanies.map((c, idx) => {
+                : sortedCompanies.map((c, idx) => {
                   const linked = persons.filter(p => p.organizationId === c.id);
                   return (
                     <tr key={c.id}
