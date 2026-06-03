@@ -110,6 +110,11 @@ const badge: React.CSSProperties = {
   borderRadius: 3, whiteSpace: 'nowrap', display: 'inline-block',
 };
 
+const actionBtn: React.CSSProperties = {
+  padding: '4px 10px', borderRadius: 3, fontFamily: FF, fontWeight: 700,
+  fontSize: 10.5, cursor: 'pointer', width: '100%', boxSizing: 'border-box', textAlign: 'center',
+};
+
 // ── Modal ─────────────────────────────────────────────────────────
 const RfqModal: React.FC<{
   initial: CrmRfq;
@@ -329,27 +334,26 @@ const CrmRfqTab: React.FC<{ persons: CrmPerson[]; companies: CrmCompany[] }> = (
         <KpiCard label="Pipeline Value" accent={C.purple} value={fmtMoney(stats.pipeline)} sub="active enquiries" />
       </div>
 
-      {/* Toolbar */}
-      <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', gap: 10, flexWrap: 'wrap', paddingBottom: 12 }}>
-        <div style={{ display: 'flex', gap: 10, alignItems: 'center', flexWrap: 'wrap' }}>
-          <input
-            value={search}
-            onChange={e => setSearch(e.target.value)}
-            placeholder="Search RFQs…"
-            style={{ padding: '7px 12px', borderRadius: 4, border: `1px solid ${C.borderMd}`, background: C.surface, fontFamily: FF, fontSize: 12, width: 200, outline: 'none' }}
-          />
-          <select
-            value={stageFilter}
-            onChange={e => setStageFilter(e.target.value)}
-            style={{ padding: '7px 12px', borderRadius: 4, border: `1px solid ${C.borderMd}`, background: C.surface, fontFamily: FF, fontSize: 12, color: C.text }}
-          >
-            <option value="all">All stages</option>
-            {STAGES.map(s => <option key={s} value={s}>{s}</option>)}
-          </select>
-        </div>
+      {/* Toolbar — search, filter, and + RFQ on one row */}
+      <div style={{ display: 'flex', alignItems: 'center', gap: 10, flexWrap: 'nowrap', paddingBottom: 12, width: '100%' }}>
+        <input
+          value={search}
+          onChange={e => setSearch(e.target.value)}
+          placeholder="Search RFQs…"
+          style={{ padding: '7px 12px', borderRadius: 4, border: `1px solid ${C.borderMd}`, background: C.surface, fontFamily: FF, fontSize: 12, width: 200, minWidth: 140, flexShrink: 1, outline: 'none' }}
+        />
+        <select
+          value={stageFilter}
+          onChange={e => setStageFilter(e.target.value)}
+          style={{ padding: '7px 12px', borderRadius: 4, border: `1px solid ${C.borderMd}`, background: C.surface, fontFamily: FF, fontSize: 12, color: C.text, flexShrink: 0, minWidth: 130 }}
+        >
+          <option value="all">All stages</option>
+          {STAGES.map(s => <option key={s} value={s}>{s}</option>)}
+        </select>
+        <div style={{ flex: 1, minWidth: 8 }} />
         <button
           onClick={() => setModal(emptyRfq(rfqs))}
-          style={{ padding: '8px 18px', borderRadius: 4, border: 'none', background: C.green, color: '#fff', fontFamily: FF, fontWeight: 700, fontSize: 12, cursor: 'pointer', whiteSpace: 'nowrap' }}
+          style={{ padding: '8px 18px', borderRadius: 4, border: 'none', background: C.green, color: '#fff', fontFamily: FF, fontWeight: 700, fontSize: 12, cursor: 'pointer', whiteSpace: 'nowrap', flexShrink: 0 }}
         >
           + RFQ
         </button>
@@ -360,7 +364,7 @@ const CrmRfqTab: React.FC<{ persons: CrmPerson[]; companies: CrmCompany[] }> = (
         <table style={{ width: '100%', borderCollapse: 'collapse', minWidth: 960 }}>
           <thead>
             <tr>
-              {['RFQ #', 'Project', 'Company', 'Type', 'Source', 'Received', 'Quote By', 'Est Value', 'Stage', 'Owner', ''].map(h => (
+              {['RFQ #', 'Project', 'Company', 'Type', 'Source', 'Received', 'Quote By', 'Est Value', 'Stage', 'Owner', 'Actions'].map(h => (
                 <th key={h} style={{ padding: '9px 10px', textAlign: 'left', fontFamily: FF, fontWeight: 700, fontSize: 10, letterSpacing: '.06em', textTransform: 'uppercase', color: C.sub, background: C.thBg, borderBottom: `2px solid ${C.borderMd}`, whiteSpace: 'nowrap' }}>
                   {h}
                 </th>
@@ -379,8 +383,6 @@ const CrmRfqTab: React.FC<{ persons: CrmPerson[]; companies: CrmCompany[] }> = (
                 key={r.id}
                 onMouseEnter={e => { (e.currentTarget as HTMLTableRowElement).style.background = C.rowHover; }}
                 onMouseLeave={e => { (e.currentTarget as HTMLTableRowElement).style.background = 'transparent'; }}
-                style={{ cursor: 'pointer' }}
-                onClick={() => setModal({ ...r })}
               >
                 <td style={{ padding: '10px', fontFamily: FF, fontSize: 12, fontWeight: 700, color: '#0d9488', borderBottom: `1px solid ${C.border}` }}>{r.rfqNum}</td>
                 <td style={{ padding: '10px', fontFamily: FF, fontSize: 12, fontWeight: 600, color: C.text, borderBottom: `1px solid ${C.border}` }}>{r.projectTitle || '—'}</td>
@@ -398,13 +400,21 @@ const CrmRfqTab: React.FC<{ persons: CrmPerson[]; companies: CrmCompany[] }> = (
                   <span style={{ ...badge, ...stageStyle(r.stage) }}>{r.stage.toUpperCase()}</span>
                 </td>
                 <td style={{ padding: '10px', fontFamily: FF, fontSize: 12, fontWeight: 700, color: C.sub, borderBottom: `1px solid ${C.border}` }}>{r.assignedTo || '—'}</td>
-                <td style={{ padding: '10px', borderBottom: `1px solid ${C.border}` }} onClick={e => e.stopPropagation()}>
-                  <button
-                    onClick={() => deleteRfq(r.id)}
-                    style={{ padding: '2px 8px', borderRadius: 3, border: `1px solid ${C.red}`, background: 'transparent', color: C.red, fontFamily: FF, fontSize: 10, fontWeight: 700, cursor: 'pointer' }}
-                  >
-                    Del
-                  </button>
+                <td style={{ padding: '8px 10px 8px 6px', borderBottom: `1px solid ${C.border}`, verticalAlign: 'middle' }}>
+                  <div style={{ display: 'flex', flexDirection: 'column', gap: 4, minWidth: 52 }}>
+                    <button
+                      onClick={() => setModal({ ...r })}
+                      style={{ ...actionBtn, border: 'none', background: C.purple, color: '#fff' }}
+                    >
+                      Edit
+                    </button>
+                    <button
+                      onClick={() => deleteRfq(r.id)}
+                      style={{ ...actionBtn, border: `1px solid ${C.red}`, background: 'transparent', color: C.red }}
+                    >
+                      Del
+                    </button>
+                  </div>
                 </td>
               </tr>
             ))}
