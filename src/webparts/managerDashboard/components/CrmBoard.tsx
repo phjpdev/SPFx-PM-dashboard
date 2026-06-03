@@ -10,6 +10,19 @@ type CrmTab = 'persons' | 'companies' | 'rfq' | 'quotes';
 const PHONE_TYPES  = ['Work', 'Home', 'Mobile', 'Other'];
 const EMAIL_TYPES  = ['Work', 'Home', 'Other'];
 
+const PERSON_POSITIONS = [
+  'Accounts',
+  'Admin',
+  'Architect',
+  'Construction Mgr',
+  'Draftee',
+  'Drafting Manager',
+  'Engineer',
+  'Estimator',
+  'Owner',
+  'Project Manager',
+];
+
 const COUNTRY_CODES = [
   { cc: '+93',   flag: '🇦🇫', name: 'Afghanistan'                        },
   { cc: '+355',  flag: '🇦🇱', name: 'Albania'                            },
@@ -510,14 +523,7 @@ const PersonModal: React.FC<{ initial: CrmPerson; companies: CrmCompany[]; onSav
         <label style={ml}>Position</label>
         <select value={d.position} onChange={e => set('position', e.target.value)} style={mi}>
           <option value="">— Select position —</option>
-          <option>Project Manager</option>
-          <option>Estimator</option>
-          <option>Admin</option>
-          <option>Accounts</option>
-          <option>Construction Mgr</option>
-          <option>Owner</option>
-          <option>Engineer</option>
-          <option>Architect</option>
+          {PERSON_POSITIONS.map(pos => <option key={pos} value={pos}>{pos}</option>)}
         </select>
       </div>
       <label style={ml}>Phone</label>
