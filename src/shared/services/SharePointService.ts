@@ -7,11 +7,17 @@ const LIST_RFI = '3Edge_RFIs';
 const LIST_TASKS = 'WeeklyTasks';
 const LIST_TEAM = 'TeamMembers';
 const LIST_SETTINGS = '3Edge_Settings';
+const SITE_DATA_FOLDER = '3EdgeDashboardData';
+/** Max chars per 3Edge_Settings Value row when chunking (avoids HTTP 500 on huge blobs). */
+const SETTING_CHUNK_SIZE = 100000;
 
 export class SharePointService {
   private _siteUrl: string;
   private _digest: string = '';
   private _digestTime: number = 0;
+  private _webRelUrl: string = '';
+  /** After 403/400 on library writes, use 3Edge_Settings only (no repeated failed file API calls). */
+  private _siteDataFilesUnavailable = false;
 
   // spHttpClient param kept for API compat but all requests use plain fetch
   constructor(siteUrl: string, _spHttpClient?: SPHttpClient) {
@@ -468,6 +474,11 @@ export class SharePointService {
     return s.replace(/'/g, "''");
   }
 
+  /** Server-relative path for OData GetFileByServerRelativeUrl / GetFolderByServerRelativeUrl. */
+  private static oDataPath(path: string): string {
+    return SharePointService.oDataStr(path);
+  }
+
   public async getSetting(key: string): Promise<string | undefined> {
     try {
       const k = SharePointService.oDataStr(key);
@@ -494,8 +505,77 @@ export class SharePointService {
     }
   }
 
-  /** Read large JSON blobs split across multiple settings rows (max ~58k chars each). */
-  public async getSettingChunks(baseKey: string): Promise<string | null> {
+  private async getWebRelUrl(): Promise<string> {
+    if (this._webRelUrl) return this._webRelUrl;
+    const web = await this.spGet('/_api/web?$select=ServerRelativeUrl');
+    this._webRelUrl = web.ServerRelativeUrl || '';
+    return this._webRelUrl;
+  }
+
+  private async ensureSiteDataFolder(): Promise<string> {
+    const webUrl = await this.getWebRelUrl();
+    const folderPath = `${webUrl}/${SITE_DATA_FOLDER}`;
+    try {
+      await this.spPost('/_api/web/folders', {
+        __metadata: { type: 'SP.Folder' },
+        ServerRelativeUrl: folderPath,
+      });
+    } catch {
+      /* folder may already exist */
+    }
+    return folderPath;
+  }
+
+  private fileNameForKey(baseKey: string): string {
+    return `${baseKey.replace(/[^a-zA-Z0-9_-]/g, '_')}.json`;
+  }
+
+  /** Read JSON from site document library (supports large CRM/checklist payloads). */
+  private async readSiteDataFile(baseKey: string): Promise<string | null> {
+    try {
+      const webUrl = await this.getWebRelUrl();
+      const filePath = `${webUrl}/${SITE_DATA_FOLDER}/${this.fileNameForKey(baseKey)}`;
+      const r = await fetch(`${this._siteUrl}/_api/web/GetFileByServerRelativeUrl('${SharePointService.oDataPath(filePath)}')/$value`, {
+        credentials: 'include',
+      });
+      if (r.status === 404) return null;
+      if (!r.ok) throw new Error('HTTP ' + r.status);
+      return r.text();
+    } catch {
+      return null;
+    }
+  }
+
+  /** Write JSON to site document library. */
+  private async writeSiteDataFile(baseKey: string, value: string): Promise<void> {
+    const folderPath = await this.ensureSiteDataFolder();
+    const fileName = this.fileNameForKey(baseKey);
+    const digest = await this.getDigest();
+    const r = await fetch(
+      `${this._siteUrl}/_api/web/GetFolderByServerRelativeUrl('${SharePointService.oDataPath(folderPath)}')/Files/add(url='${encodeURIComponent(fileName)}',overwrite=true)`,
+      {
+        method: 'POST',
+        credentials: 'include',
+        headers: {
+          Accept: 'application/json;odata=nometadata',
+          'X-RequestDigest': digest,
+        },
+        body: value,
+      },
+    );
+    if (!r.ok) {
+      let msg = 'HTTP ' + r.status;
+      try {
+        const e = await r.json();
+        const em = e.error?.message;
+        msg = (typeof em === 'object' && em?.value) ? em.value : (em || msg);
+      } catch { /* ignore */ }
+      throw new Error(msg);
+    }
+  }
+
+  /** Legacy: read chunks from 3Edge_Settings (Value column size limit caused HTTP 500 on large data). */
+  private async getSettingChunksLegacy(baseKey: string): Promise<string | null> {
     const metaRaw = await this.getSetting(`${baseKey}__meta`);
     if (!metaRaw) return null;
     try {
@@ -512,28 +592,43 @@ export class SharePointService {
     }
   }
 
-  /** Write large JSON blobs to settings (shared across all site users). */
+  /** Write chunks to 3Edge_Settings (works when users lack library Contribute). */
+  private async setSettingChunksLegacy(baseKey: string, value: string): Promise<void> {
+    if (value.length <= SETTING_CHUNK_SIZE) {
+      await this.setSettingStrict(baseKey, value);
+      return;
+    }
+    const chunks: string[] = [];
+    for (let i = 0; i < value.length; i += SETTING_CHUNK_SIZE) {
+      chunks.push(value.slice(i, i + SETTING_CHUNK_SIZE));
+    }
+    await this.setSettingStrict(`${baseKey}__meta`, JSON.stringify({ chunks: chunks.length }));
+    for (let i = 0; i < chunks.length; i++) {
+      await this.setSettingStrict(`${baseKey}__${i}`, chunks[i]);
+    }
+  }
+
+  /** Read large JSON blobs (settings list first when library unavailable; optional file). */
+  public async getSettingChunks(baseKey: string): Promise<string | null> {
+    if (!this._siteDataFilesUnavailable) {
+      const fromFile = await this.readSiteDataFile(baseKey);
+      if (fromFile) return fromFile;
+    }
+    const direct = await this.getSetting(baseKey);
+    if (direct) return direct;
+    return this.getSettingChunksLegacy(baseKey);
+  }
+
+  /** Write JSON for all site users — library file, then 3Edge_Settings fallback. */
   public async setSettingChunks(baseKey: string, value: string): Promise<void> {
-    const CHUNK = 58000;
-    const parts: string[] = [];
-    for (let i = 0; i < value.length; i += CHUNK) {
-      parts.push(value.slice(i, i + CHUNK));
-    }
-    for (let i = 0; i < parts.length; i++) {
-      await this.setSettingStrict(`${baseKey}__${i}`, parts[i]);
-    }
-    const oldMeta = await this.getSetting(`${baseKey}__meta`);
-    if (oldMeta) {
+    if (!this._siteDataFilesUnavailable) {
       try {
-        const old = JSON.parse(oldMeta) as { chunks: number };
-        for (let i = parts.length; i < old.chunks; i++) {
-          await this.setSettingStrict(`${baseKey}__${i}`, '');
-        }
-      } catch { /* ignore */ }
+        await this.writeSiteDataFile(baseKey, value);
+        return;
+      } catch {
+        this._siteDataFilesUnavailable = true;
+      }
     }
-    await this.setSettingStrict(
-      `${baseKey}__meta`,
-      JSON.stringify({ chunks: parts.length, updated: new Date().toISOString() }),
-    );
+    await this.setSettingChunksLegacy(baseKey, value);
   }
 }

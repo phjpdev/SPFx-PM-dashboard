@@ -1,7 +1,7 @@
 import * as React from 'react';
 import { IProject } from '../../../shared/models/IProject';
 import type { SharePointService } from '../../../shared/services/SharePointService';
-import { loadChecklistJson, saveChecklistJson } from './checklistStorage';
+import { checklistLocalKey, loadChecklistJson, saveChecklistJson } from './checklistStorage';
 
 // ───────────────────────────── Types ─────────────────────────────
 type SectionType = 'steel' | 'concrete' | 'both';
@@ -396,7 +396,6 @@ const disciplineToType = (d: string): ProjectType => {
   if (t.indexOf('concrete') >= 0) return 'concrete';
   return 'steel';
 };
-const storageKey = (projId: string): string => `3edge_checklist_v1_${projId}`;
 
 interface IPersisted {
   items: Record<string, IItemState>;
@@ -445,8 +444,8 @@ const ChecklistBoard: React.FC<ChecklistBoardProps> = ({ projects, userDisplayNa
   const [items, setItems] = React.useState<Record<string, IItemState>>({});
   const [overrides, setOverrides] = React.useState<IOverrideLog[]>([]);
   const [checklistReady, setChecklistReady] = React.useState(false);
-  const [syncState, setSyncState] = React.useState<'loading' | 'saving' | 'synced' | 'error'>('loading');
-  const [syncError, setSyncError] = React.useState('');
+  const [syncState, setSyncState] = React.useState<'idle' | 'loading' | 'saving'>('loading');
+  const [spSyncNote, setSpSyncNote] = React.useState('');
   const stateRef = React.useRef<IPersisted>({ items: {}, overrides: [], projectType: 'steel', role: 'detailer', currentPhase: '01' });
   const lastSaveAtRef = React.useRef(0);
   const saveTimerRef = React.useRef<ReturnType<typeof setTimeout> | null>(null);
@@ -502,28 +501,26 @@ const ChecklistBoard: React.FC<ChecklistBoardProps> = ({ projects, userDisplayNa
         if (cancelled) return;
         if (raw) {
           applyPersisted(JSON.parse(raw) as IPersisted);
+          setSpSyncNote('');
         } else {
-          const ls = localStorage.getItem(storageKey(selProjId));
-          if (ls) {
-            applyPersisted(JSON.parse(ls) as IPersisted);
-            await saveChecklistJson(spService, selProjId, ls);
+          resetForNewProject(selProjId);
+        }
+      } catch {
+        if (cancelled) return;
+        try {
+          const raw = localStorage.getItem(checklistLocalKey(selProjId));
+          if (raw) {
+            applyPersisted(JSON.parse(raw) as IPersisted);
+            setSpSyncNote('Using checklist saved on this device only.');
           } else {
             resetForNewProject(selProjId);
           }
-        }
-        setSyncState('synced');
-        setSyncError('');
-      } catch (e) {
-        if (cancelled) return;
-        try {
-          const raw = localStorage.getItem(storageKey(selProjId));
-          if (raw) applyPersisted(JSON.parse(raw) as IPersisted);
-          else resetForNewProject(selProjId);
         } catch { resetForNewProject(selProjId); }
-        setSyncState('error');
-        setSyncError(e instanceof Error ? e.message : 'Could not load checklist from SharePoint');
       } finally {
-        if (!cancelled) setChecklistReady(true);
+        if (!cancelled) {
+          setSyncState('idle');
+          setChecklistReady(true);
+        }
       }
     })();
     return () => { cancelled = true; };
@@ -538,19 +535,11 @@ const ChecklistBoard: React.FC<ChecklistBoardProps> = ({ projects, userDisplayNa
   const flushSave = React.useCallback(async (): Promise<void> => {
     if (!selProjId) return;
     const payload: IPersisted = { items: stateRef.current.items, overrides: stateRef.current.overrides, projectType: stateRef.current.projectType, role: stateRef.current.role, currentPhase: stateRef.current.currentPhase };
-    try {
-      setSyncState('saving');
-      await saveChecklistJson(spService, selProjId, JSON.stringify(payload));
-      lastSaveAtRef.current = Date.now();
-      setSyncState('synced');
-      setSyncError('');
-    } catch (e) {
-      setSyncState('error');
-      setSyncError(e instanceof Error ? e.message : 'Could not save checklist to SharePoint');
-      try {
-        localStorage.setItem(storageKey(selProjId), JSON.stringify(payload));
-      } catch { /* ignore */ }
-    }
+    setSyncState('saving');
+    const synced = await saveChecklistJson(spService, selProjId, JSON.stringify(payload));
+    lastSaveAtRef.current = Date.now();
+    setSyncState('idle');
+    setSpSyncNote(synced ? '' : 'Saved on this device. SharePoint sync failed — ensure users can edit the 3Edge_Settings list.');
   }, [selProjId, spService]);
 
   // Persist to SharePoint when state changes
@@ -716,22 +705,24 @@ const ChecklistBoard: React.FC<ChecklistBoardProps> = ({ projects, userDisplayNa
     border: `1px solid ${t === 'steel' ? '#4a90d9' : t === 'concrete' ? '#9b7fe8' : '#10b981'}`,
   });
 
-  const syncLabel =
-    syncState === 'loading' ? 'Loading checklist from SharePoint…'
-    : syncState === 'saving' ? 'Saving checklist…'
-    : syncState === 'error' ? `SharePoint sync issue: ${syncError}`
-    : 'Checklist synced — all users on this site see the same ticks';
-
   return (
     <div style={{ fontFamily: 'Montserrat' }}>
-      <div style={{
-        padding: '8px 12px', marginBottom: 10, borderRadius: 6, fontSize: 11, fontWeight: 600,
-        color: syncState === 'error' ? '#b82020' : syncState === 'synced' ? '#157a15' : 'var(--t2)',
-        background: syncState === 'error' ? 'rgba(204,51,51,.08)' : syncState === 'synced' ? 'rgba(42,158,42,.09)' : 'var(--s2)',
-        border: `1px solid ${syncState === 'error' ? '#e88' : syncState === 'synced' ? '#3db63d' : 'var(--bd)'}`,
-      }}>
-        {syncLabel}
-      </div>
+      {syncState !== 'idle' && (
+        <div style={{
+          padding: '8px 12px', marginBottom: 10, borderRadius: 6, fontSize: 11, fontWeight: 600,
+          color: 'var(--t2)', background: 'var(--s2)', border: '1px solid var(--bd)',
+        }}>
+          {syncState === 'loading' ? 'Loading checklist…' : 'Saving checklist…'}
+        </div>
+      )}
+      {spSyncNote && syncState === 'idle' && (
+        <div style={{
+          padding: '8px 12px', marginBottom: 10, borderRadius: 6, fontSize: 11, fontWeight: 600,
+          color: 'var(--t2)', background: 'rgba(90,110,136,.08)', border: '1px solid var(--bd)',
+        }}>
+          {spSyncNote}
+        </div>
+      )}
 
       {!checklistReady ? (
         <div style={{ padding: 48, textAlign: 'center', color: 'var(--t3)', fontSize: 13 }}>Loading checklist…</div>
