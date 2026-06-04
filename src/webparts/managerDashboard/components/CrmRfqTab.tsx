@@ -1,4 +1,6 @@
 import * as React from 'react';
+import { loadRfqsFromSharePoint, saveRfqsToSharePoint } from './crmStorage';
+import type { SharePointService } from '../../../shared/services/SharePointService';
 import type { CrmPerson, CrmCompany, CrmRfq, CrmRfqDiscipline, CrmRfqStage } from './crmTypes';
 
 const FF = 'Montserrat,sans-serif';
@@ -32,7 +34,7 @@ const todayIso = (): string => {
   return `${t.getFullYear()}-${String(t.getMonth() + 1).padStart(2, '0')}-${String(t.getDate()).padStart(2, '0')}`;
 };
 
-const loadRfqs = (): CrmRfq[] => {
+const loadRfqsLocal = (): CrmRfq[] => {
   try {
     const v = localStorage.getItem(LS_RFQS);
     return v ? (JSON.parse(v) as CrmRfq[]) : [];
@@ -276,13 +278,42 @@ const KpiCard: React.FC<{ label: string; value: string; sub: string; accent: str
 );
 
 // ── Main tab ──────────────────────────────────────────────────────
-const CrmRfqTab: React.FC<{ persons: CrmPerson[]; companies: CrmCompany[] }> = ({ persons, companies }) => {
-  const [rfqs, setRfqs] = React.useState<CrmRfq[]>(() => loadRfqs());
+const CrmRfqTab: React.FC<{ spService: SharePointService; persons: CrmPerson[]; companies: CrmCompany[] }> = ({ spService, persons, companies }) => {
+  const [rfqs, setRfqs] = React.useState<CrmRfq[]>([]);
+  const [rfqReady, setRfqReady] = React.useState(false);
   const [search, setSearch] = React.useState('');
   const [stageFilter, setStageFilter] = React.useState('all');
   const [modal, setModal] = React.useState<CrmRfq | null>(null);
+  const rfqsRef = React.useRef(rfqs);
+  rfqsRef.current = rfqs;
+  const saveTimerRef = React.useRef<ReturnType<typeof setTimeout> | null>(null);
 
-  React.useEffect(() => { localStorage.setItem(LS_RFQS, JSON.stringify(rfqs)); }, [rfqs]);
+  React.useEffect(() => {
+    let cancelled = false;
+    void (async () => {
+      try {
+        const data = await loadRfqsFromSharePoint(spService);
+        if (!cancelled) setRfqs(data);
+      } catch {
+        if (!cancelled) setRfqs(loadRfqsLocal());
+      } finally {
+        if (!cancelled) setRfqReady(true);
+      }
+    })();
+    return () => { cancelled = true; };
+  }, [spService]);
+
+  React.useEffect(() => {
+    if (!rfqReady) return;
+    localStorage.setItem(LS_RFQS, JSON.stringify(rfqs));
+    if (saveTimerRef.current) clearTimeout(saveTimerRef.current);
+    saveTimerRef.current = setTimeout(() => {
+      void saveRfqsToSharePoint(spService, rfqsRef.current).catch(() => undefined);
+    }, 2000);
+    return () => {
+      if (saveTimerRef.current) clearTimeout(saveTimerRef.current);
+    };
+  }, [rfqs, rfqReady, spService]);
 
   const companyName = (id: string): string => companies.find(c => c.id === id)?.name || '—';
 
@@ -314,13 +345,23 @@ const CrmRfqTab: React.FC<{ persons: CrmPerson[]; companies: CrmCompany[] }> = (
   });
 
   const saveRfq = (r: CrmRfq): void => {
-    setRfqs(prev => prev.some(x => x.id === r.id) ? prev.map(x => x.id === r.id ? r : x) : [...prev, r]);
+    setRfqs(prev => {
+      const next = prev.some(x => x.id === r.id) ? prev.map(x => x.id === r.id ? r : x) : [...prev, r];
+      rfqsRef.current = next;
+      if (saveTimerRef.current) clearTimeout(saveTimerRef.current);
+      void saveRfqsToSharePoint(spService, next).catch(() => undefined);
+      return next;
+    });
     setModal(null);
   };
 
   const deleteRfq = (id: string): void => {
     if (confirm('Delete this RFQ?')) setRfqs(prev => prev.filter(x => x.id !== id));
   };
+
+  if (!rfqReady) {
+    return <div style={{ padding: 24, fontFamily: FF, fontSize: 13, color: C.muted }}>Loading RFQs…</div>;
+  }
 
   return (
     <>
