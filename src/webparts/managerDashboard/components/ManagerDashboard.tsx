@@ -2547,6 +2547,7 @@ const ManagerDashboard: React.FC<IManagerDashboardProps> = (props) => {
               userDisplayName={props.userDisplayName}
               isManager={isManager}
               toast={toast}
+              spService={spService.current}
             />
           </div>
         )}
