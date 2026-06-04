@@ -1,6 +1,6 @@
 import * as React from 'react';
 import { SharePointService } from '../../../shared/services/SharePointService';
-import { ITask, ITeamMember, ITaskHistory, DAYS, PROD_TASK_CODES, NON_PROD_TASK_CODES, isNonProd, CHECK_CODES } from '../../../shared/models/ITask';
+import { ITask, ITeamMember, ITaskHistory, DAYS, PROD_TASK_CODES, NON_PROD_TASK_CODES, LEGACY_NON_PROD_CODE_MAP, normalizeTaskCode, isNonProd, CHECK_CODES } from '../../../shared/models/ITask';
 import { IProject } from '../../../shared/models/IProject';
 
 // ── Helpers ──────────────────────────────────────────────────
@@ -241,11 +241,18 @@ const TaskRow: React.FC<TaskRowProps> = ({ task, onUpdate, onEdit, onDelete, isL
 };
 
 // ── Code Select Helpers ──────────────────────────────────────
-const CodeOpts: React.FC<{ codes: typeof PROD_TASK_CODES; value: string; onChange: (v: string) => void; style: React.CSSProperties }> = ({ codes, value, onChange, style }) => (
-  <select value={value} onChange={e => onChange(e.target.value)} style={style}>
-    {codes.map(g => <optgroup key={g.group} label={g.group}>{g.codes.map(c => <option key={c.id} value={c.id}>{c.id} — {c.label}</option>)}</optgroup>)}
-  </select>
-);
+const CodeOpts: React.FC<{ codes: typeof PROD_TASK_CODES; value: string; onChange: (v: string) => void; style: React.CSSProperties }> = ({ codes, value, onChange, style }) => {
+  const allIds: string[] = [];
+  codes.forEach(g => { g.codes.forEach(c => { allIds.push(c.id); }); });
+  const displayValue = allIds.indexOf(value) >= 0 ? value : (LEGACY_NON_PROD_CODE_MAP[value] || value);
+  const legacyOrphan = value && allIds.indexOf(value) < 0 && !LEGACY_NON_PROD_CODE_MAP[value];
+  return (
+    <select value={displayValue} onChange={e => onChange(e.target.value)} style={style}>
+      {legacyOrphan && <option value={value}>{value} — (legacy)</option>}
+      {codes.map(g => <optgroup key={g.group} label={g.group}>{g.codes.map(c => <option key={c.id} value={c.id}>{c.id} — {c.label}</option>)}</optgroup>)}
+    </select>
+  );
+};
 
 // ── Edit Task Modal ──────────────────────────────────────────
 interface EditTaskModalProps {
@@ -340,7 +347,7 @@ const PlanWeekPanel: React.FC<PlanWeekProps> = ({ lastWeekTasks, team, activePro
     if (mode === 'production') {
       setRows(p => [...p, { id: `b-${Date.now()}-${Math.random()}`, project: activeProjects[0]?.projNum || '', taskCode: '03a', description: '', assignee: defAssignee, day: 0, hoursPlanned: 4, priority: 'medium', isInternal: false }]);
     } else {
-      setRows(p => [...p, { id: `b-${Date.now()}-${Math.random()}`, project: '3E-INT', taskCode: '00c', description: '', assignee: defAssignee, day: 0, hoursPlanned: 1, priority: 'low', isInternal: true }]);
+      setRows(p => [...p, { id: `b-${Date.now()}-${Math.random()}`, project: '3E-INT', taskCode: 'NP01c', description: '', assignee: defAssignee, day: 0, hoursPlanned: 1, priority: 'low', isInternal: true }]);
     }
   };
   const updateRow = (id: string, field: string, val: string | number): void => {
@@ -367,7 +374,7 @@ const PlanWeekPanel: React.FC<PlanWeekProps> = ({ lastWeekTasks, team, activePro
     const tasks: Omit<ITask, 'id' | 'spId'>[] = valid.map(r => {
       const carried = r.wipPct !== undefined && r.wipPct > 0;
       return {
-        project: r.project, taskCode: r.taskCode, description: r.description, assignee: r.assignee, day: r.day, weekStartDate: wsd,
+        project: r.project, taskCode: isNonProd(r.project) ? normalizeTaskCode(r.taskCode) : r.taskCode, description: r.description, assignee: r.assignee, day: r.day, weekStartDate: wsd,
         hoursPlanned: r.hoursPlanned, hoursActual: carried ? round1(r.hoursPlanned * r.wipPct! / 100) : 0, wipPct: carried ? r.wipPct! : 0, status: carried ? 'wip' : 'not_started', priority: r.priority,
         completedBy: '', completedAt: '', completionNote: '', reviewedBy: '', reviewStatus: '',
         history: [{ action: 'created', user: currentUserInitials, ts: now(), detail: `${r.hoursPlanned}h planned — weekly planning${carried ? ` (carried fwd at ${r.wipPct}%)` : ''}` }]
