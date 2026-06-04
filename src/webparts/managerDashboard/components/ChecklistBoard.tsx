@@ -1,5 +1,7 @@
 import * as React from 'react';
 import { IProject } from '../../../shared/models/IProject';
+import type { SharePointService } from '../../../shared/services/SharePointService';
+import { loadChecklistJson, saveChecklistJson } from './checklistStorage';
 
 // ───────────────────────────── Types ─────────────────────────────
 type SectionType = 'steel' | 'concrete' | 'both';
@@ -410,6 +412,7 @@ interface ChecklistBoardProps {
   userDisplayName: string;
   isManager: boolean;
   toast: (msg: string) => void;
+  spService: SharePointService;
 }
 
 // ───────────────────────────── Sub-components ─────────────────────────────
@@ -433,7 +436,7 @@ const StatusPill: React.FC<{ st: IItemState }> = ({ st }) => {
 };
 
 // ───────────────────────────── Component ─────────────────────────────
-const ChecklistBoard: React.FC<ChecklistBoardProps> = ({ projects, userDisplayName, isManager, toast }) => {
+const ChecklistBoard: React.FC<ChecklistBoardProps> = ({ projects, userDisplayName, isManager, toast, spService }) => {
   const mainProjects = React.useMemo(() => projects.filter(p => !p.isEwo), [projects]);
   const [selProjId, setSelProjId] = React.useState<string>('');
   const [role, setRole] = React.useState<Role>(isManager ? 'pm' : 'detailer');
@@ -441,9 +444,43 @@ const ChecklistBoard: React.FC<ChecklistBoardProps> = ({ projects, userDisplayNa
   const [currentPhase, setCurrentPhase] = React.useState<string>('01');
   const [items, setItems] = React.useState<Record<string, IItemState>>({});
   const [overrides, setOverrides] = React.useState<IOverrideLog[]>([]);
+  const [checklistReady, setChecklistReady] = React.useState(false);
+  const [syncState, setSyncState] = React.useState<'loading' | 'saving' | 'synced' | 'error'>('loading');
+  const [syncError, setSyncError] = React.useState('');
+  const stateRef = React.useRef<IPersisted>({ items: {}, overrides: [], projectType: 'steel', role: 'detailer', currentPhase: '01' });
+  const lastSaveAtRef = React.useRef(0);
+  const saveTimerRef = React.useRef<ReturnType<typeof setTimeout> | null>(null);
 
   // Override modal state
   const [ovModal, setOvModal] = React.useState<{ id: string | null; action: C2Action; reason: string }>({ id: null, action: 'cleared', reason: '' });
+
+  const applyPersisted = (d: IPersisted): void => {
+    setItems(d.items || {});
+    setOverrides(d.overrides || []);
+    setProjectType(d.projectType || 'steel');
+    setCurrentPhase(d.currentPhase || '01');
+    if (d.role) setRole(d.role);
+  };
+
+  const resetForNewProject = (projId: string): void => {
+    const proj = mainProjects.filter(p => p.id === projId)[0];
+    setItems({});
+    setOverrides([]);
+    setCurrentPhase('01');
+    setProjectType(proj ? disciplineToType(proj.discipline) : 'steel');
+  };
+
+  const pullRemote = React.useCallback(async (projId: string, skipIfRecentSave = true): Promise<void> => {
+    if (skipIfRecentSave && Date.now() - lastSaveAtRef.current < 4000) return;
+    try {
+      const raw = await loadChecklistJson(spService, projId);
+      if (!raw) return;
+      const d = JSON.parse(raw) as IPersisted;
+      const remoteStr = JSON.stringify(d);
+      const localStr = JSON.stringify(stateRef.current);
+      if (remoteStr !== localStr) applyPersisted(d);
+    } catch { /* ignore poll errors */ }
+  }, [spService]);
 
   // Auto-select first project when loaded
   React.useEffect(() => {
@@ -453,38 +490,92 @@ const ChecklistBoard: React.FC<ChecklistBoardProps> = ({ projects, userDisplayNa
     }
   }, [mainProjects, selProjId]);
 
-  // Load persisted state when project changes
+  // Load from SharePoint when project changes
   React.useEffect(() => {
     if (!selProjId) return;
-    try {
-      const raw = window.localStorage.getItem(storageKey(selProjId));
-      if (raw) {
-        const d: IPersisted = JSON.parse(raw);
-        setItems(d.items || {});
-        setOverrides(d.overrides || []);
-        setProjectType(d.projectType || 'steel');
-        setCurrentPhase(d.currentPhase || '01');
-        if (d.role) setRole(d.role);
-        return;
+    let cancelled = false;
+    setChecklistReady(false);
+    setSyncState('loading');
+    void (async () => {
+      try {
+        const raw = await loadChecklistJson(spService, selProjId);
+        if (cancelled) return;
+        if (raw) {
+          applyPersisted(JSON.parse(raw) as IPersisted);
+        } else {
+          const ls = localStorage.getItem(storageKey(selProjId));
+          if (ls) {
+            applyPersisted(JSON.parse(ls) as IPersisted);
+            await saveChecklistJson(spService, selProjId, ls);
+          } else {
+            resetForNewProject(selProjId);
+          }
+        }
+        setSyncState('synced');
+        setSyncError('');
+      } catch (e) {
+        if (cancelled) return;
+        try {
+          const raw = localStorage.getItem(storageKey(selProjId));
+          if (raw) applyPersisted(JSON.parse(raw) as IPersisted);
+          else resetForNewProject(selProjId);
+        } catch { resetForNewProject(selProjId); }
+        setSyncState('error');
+        setSyncError(e instanceof Error ? e.message : 'Could not load checklist from SharePoint');
+      } finally {
+        if (!cancelled) setChecklistReady(true);
       }
-    } catch (e) { /* ignore */ }
-    // new project — reset and pick type from discipline
-    const proj = mainProjects.filter(p => p.id === selProjId)[0];
-    setItems({});
-    setOverrides([]);
-    setCurrentPhase('01');
-    setProjectType(proj ? disciplineToType(proj.discipline) : 'steel');
+    })();
+    return () => { cancelled = true; };
   // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [selProjId]);
+  }, [selProjId, spService]);
 
-  // Persist whenever state changes
+  // Keep ref in sync for polling compare
   React.useEffect(() => {
+    stateRef.current = { items, overrides, projectType, role, currentPhase };
+  }, [items, overrides, projectType, role, currentPhase]);
+
+  const flushSave = React.useCallback(async (): Promise<void> => {
     if (!selProjId) return;
+    const payload: IPersisted = { items: stateRef.current.items, overrides: stateRef.current.overrides, projectType: stateRef.current.projectType, role: stateRef.current.role, currentPhase: stateRef.current.currentPhase };
     try {
-      const payload: IPersisted = { items, overrides, projectType, role, currentPhase };
-      window.localStorage.setItem(storageKey(selProjId), JSON.stringify(payload));
-    } catch (e) { /* ignore */ }
-  }, [selProjId, items, overrides, projectType, role, currentPhase]);
+      setSyncState('saving');
+      await saveChecklistJson(spService, selProjId, JSON.stringify(payload));
+      lastSaveAtRef.current = Date.now();
+      setSyncState('synced');
+      setSyncError('');
+    } catch (e) {
+      setSyncState('error');
+      setSyncError(e instanceof Error ? e.message : 'Could not save checklist to SharePoint');
+      try {
+        localStorage.setItem(storageKey(selProjId), JSON.stringify(payload));
+      } catch { /* ignore */ }
+    }
+  }, [selProjId, spService]);
+
+  // Persist to SharePoint when state changes
+  React.useEffect(() => {
+    if (!selProjId || !checklistReady) return;
+    if (saveTimerRef.current) clearTimeout(saveTimerRef.current);
+    saveTimerRef.current = setTimeout(() => { void flushSave(); }, 1200);
+    return () => {
+      if (saveTimerRef.current) clearTimeout(saveTimerRef.current);
+    };
+  }, [selProjId, items, overrides, projectType, role, currentPhase, checklistReady, flushSave]);
+
+  // Poll SharePoint so other users' checkmarks appear (every 12s)
+  React.useEffect(() => {
+    if (!selProjId || !checklistReady) return;
+    const iv = setInterval(() => { void pullRemote(selProjId); }, 12000);
+    const onVis = (): void => {
+      if (document.visibilityState === 'visible') void pullRemote(selProjId);
+    };
+    document.addEventListener('visibilitychange', onVis);
+    return () => {
+      clearInterval(iv);
+      document.removeEventListener('visibilitychange', onVis);
+    };
+  }, [selProjId, checklistReady, pullRemote]);
 
   // ─── Derived lists ───
   const allFlat = React.useMemo(() => {
@@ -625,8 +716,27 @@ const ChecklistBoard: React.FC<ChecklistBoardProps> = ({ projects, userDisplayNa
     border: `1px solid ${t === 'steel' ? '#4a90d9' : t === 'concrete' ? '#9b7fe8' : '#10b981'}`,
   });
 
+  const syncLabel =
+    syncState === 'loading' ? 'Loading checklist from SharePoint…'
+    : syncState === 'saving' ? 'Saving checklist…'
+    : syncState === 'error' ? `SharePoint sync issue: ${syncError}`
+    : 'Checklist synced — all users on this site see the same ticks';
+
   return (
     <div style={{ fontFamily: 'Montserrat' }}>
+      <div style={{
+        padding: '8px 12px', marginBottom: 10, borderRadius: 6, fontSize: 11, fontWeight: 600,
+        color: syncState === 'error' ? '#b82020' : syncState === 'synced' ? '#157a15' : 'var(--t2)',
+        background: syncState === 'error' ? 'rgba(204,51,51,.08)' : syncState === 'synced' ? 'rgba(42,158,42,.09)' : 'var(--s2)',
+        border: `1px solid ${syncState === 'error' ? '#e88' : syncState === 'synced' ? '#3db63d' : 'var(--bd)'}`,
+      }}>
+        {syncLabel}
+      </div>
+
+      {!checklistReady ? (
+        <div style={{ padding: 48, textAlign: 'center', color: 'var(--t3)', fontSize: 13 }}>Loading checklist…</div>
+      ) : (
+      <>
       {/* ── Project Context Bar ── */}
       <div style={{ background: 'var(--s1)', border: '1px solid var(--bd)', borderRadius: 8, padding: '12px 16px', marginBottom: 14, display: 'flex', alignItems: 'center', gap: 14, flexWrap: 'wrap' }}>
         <span style={{ fontSize: 11, color: 'var(--t4)', letterSpacing: '.06em', fontWeight: 700, textTransform: 'uppercase' }}>Project</span>
@@ -784,6 +894,8 @@ const ChecklistBoard: React.FC<ChecklistBoardProps> = ({ projects, userDisplayNa
             )}
           </div>
         </>
+      )}
+      </>
       )}
 
       {/* ── Override modal ── */}
