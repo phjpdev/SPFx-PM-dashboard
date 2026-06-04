@@ -78,21 +78,45 @@ export const PROD_TASK_CODES = [
 ];
 
 export const NON_PROD_TASK_CODES = [
-  { group: '00 — General / Internal', codes: [
-    { id: '00a', label: 'Estimating' }, { id: '00b', label: 'Training' }, { id: '00c', label: 'Team Meetings' },
-    { id: '00d', label: 'Technical Issues' }, { id: '00e', label: 'Tekla Development' },
-    { id: '00f', label: '3E Standards Development' }, { id: '00g', label: 'Resources & Staffing' }, { id: '00h', label: 'General' },
+  { group: 'NP01 — General / Internal', codes: [
+    { id: 'NP01a', label: 'Estimating' },
+    { id: 'NP01b', label: 'Training' },
+    { id: 'NP01c', label: 'Team Meetings' },
+    { id: 'NP01d', label: 'Technical Issues' },
+    { id: 'NP01e', label: 'Tekla Development' },
+    { id: 'NP01f', label: '3E Standards Development' },
+    { id: 'NP01g', label: 'Resources & Staffing' },
+    { id: 'NP01h', label: 'General' },
   ]},
-  { group: '02 — Admin', codes: [
-    { id: 'A02a', label: 'General Admin' }, { id: 'A02b', label: 'Marketing' }, { id: 'A02c', label: 'Pipedrive Updating' },
-    { id: 'A02d', label: 'Emails' }, { id: 'A02e', label: 'Invoicing' }, { id: 'A02f', label: 'Accounts Receivable' },
-    { id: 'A02g', label: 'Accounts Payable' }, { id: 'A02h', label: 'Dashboard' }, { id: 'A02i', label: 'Contractor Payments' },
+  { group: 'NP02 — Admin', codes: [
+    { id: 'NP02a', label: 'General Admin' },
+    { id: 'NP02b', label: 'Marketing' },
+    { id: 'NP02c', label: 'Pipedrive Updating' },
+    { id: 'NP02d', label: 'Emails' },
+    { id: 'NP02e', label: 'Invoicing' },
+    { id: 'NP02f', label: 'Accounts Receivable' },
+    { id: 'NP02g', label: 'Accounts Payable' },
+    { id: 'NP02h', label: 'Dashboard' },
+    { id: 'NP02j', label: 'Contractor Payments' },
   ]},
 ];
+
+/** Map retired non-prod codes to the current NP01/NP02 codes (for existing SharePoint tasks). */
+export const LEGACY_NON_PROD_CODE_MAP: Record<string, string> = {
+  '00a': 'NP01a', '00b': 'NP01b', '00c': 'NP01c', '00d': 'NP01d', '00e': 'NP01e', '00f': 'NP01f', '00g': 'NP01g', '00h': 'NP01h',
+  'A02a': 'NP02a', 'A02b': 'NP02b', 'A02c': 'NP02c', 'A02d': 'NP02d', 'A02e': 'NP02e', 'A02f': 'NP02f',
+  'A02g': 'NP02g', 'A02h': 'NP02h', 'A02i': 'NP02j',
+};
 
 export const ALL_CODES_FLAT: { id: string; label: string }[] = ([] as { id: string; label: string }[]).concat(
   ...PROD_TASK_CODES.map(g => g.codes), ...NON_PROD_TASK_CODES.map(g => g.codes)
 );
-export const getCodeLabel = (id: string): string => { const c = ALL_CODES_FLAT.filter(x => x.id === id)[0]; return c ? c.label : id; };
+export const normalizeTaskCode = (id: string): string => LEGACY_NON_PROD_CODE_MAP[id] || id;
+
+export const getCodeLabel = (id: string): string => {
+  const normalized = normalizeTaskCode(id);
+  const c = ALL_CODES_FLAT.filter(x => x.id === normalized)[0];
+  return c ? c.label : id;
+};
 export const CHECK_CODES = ['03b', '04c', '05e'];
 export const isNonProd = (project: string): boolean => project === '3E-INT';
