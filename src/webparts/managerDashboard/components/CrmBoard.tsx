@@ -318,7 +318,10 @@ const ml: React.CSSProperties = {
 // ── Address autocomplete ──────────────────────────────────────────
 interface NominatimResult { display_name: string; }
 
-const AddressSearch: React.FC<{ value: string; onChange: (v: string) => void }> = ({ value, onChange }) => {
+const AddressSearch: React.FC<{ value: string; onChange: (v: string) => void; readOnly?: boolean }> = ({ value, onChange, readOnly }) => {
+  if (readOnly) {
+    return <input value={value} readOnly disabled style={{ ...mi, opacity: 1, cursor: 'default' }} />;
+  }
   const [suggestions, setSuggestions] = React.useState<string[]>([]);
   const [open, setOpen]               = React.useState(false);
   const timer = React.useRef<ReturnType<typeof setTimeout> | null>(null);
@@ -414,16 +417,18 @@ const MultiField: React.FC<{
   addLabel: string;
   placeholder: string;
   isPhone?: boolean;
+  readOnly?: boolean;
   onChange: (items: CrmPhone[]) => void;
-}> = ({ items, types, addLabel, placeholder, isPhone, onChange }) => (
+}> = ({ items, types, addLabel, placeholder, isPhone, readOnly, onChange }) => (
   <div style={{ marginBottom: 14 }}>
     {items.map((item, i) => (
       <div key={i} style={{ display: 'flex', gap: 5, marginBottom: 6, alignItems: 'center' }}>
         {isPhone && (
           <select
             value={item.cc || DEFAULT_CC}
+            disabled={readOnly}
             onChange={e => { const n = [...items]; n[i] = { ...n[i], cc: e.target.value }; onChange(n); }}
-            style={{ ...mi, width: 175, flex: 'none', paddingLeft: 6, paddingRight: 4, fontSize: 12 }}
+            style={{ ...mi, width: 175, flex: 'none', paddingLeft: 6, paddingRight: 4, fontSize: 12, opacity: readOnly ? 1 : undefined }}
           >
             {COUNTRY_CODES.map(c => (
               <option key={c.cc + c.name} value={c.cc}>{c.flag} {c.name} ({c.cc})</option>
@@ -432,6 +437,8 @@ const MultiField: React.FC<{
         )}
         <input
           value={item.value}
+          readOnly={readOnly}
+          disabled={readOnly}
           onChange={e => {
             const raw = e.target.value;
             const detected = isPhone ? detectAndSplit(raw) : null;
@@ -441,21 +448,23 @@ const MultiField: React.FC<{
           }}
           placeholder={placeholder}
           autoComplete="off"
-          style={{ ...mi, flex: 1 }}
+          style={{ ...mi, flex: 1, opacity: readOnly ? 1 : undefined, cursor: readOnly ? 'default' : undefined }}
         />
-        <select value={item.type} onChange={e => { const n = [...items]; n[i] = { ...n[i], type: e.target.value }; onChange(n); }} style={{ ...mi, width: 86, flex: 'none' }}>
+        <select value={item.type} disabled={readOnly} onChange={e => { const n = [...items]; n[i] = { ...n[i], type: e.target.value }; onChange(n); }} style={{ ...mi, width: 86, flex: 'none', opacity: readOnly ? 1 : undefined }}>
           {types.map(t => <option key={t} value={t}>{t}</option>)}
         </select>
-        {items.length > 1 && <button onClick={() => onChange(items.filter((_, j) => j !== i))} style={{ background: 'none', border: 'none', color: C.muted, cursor: 'pointer', fontSize: 18, lineHeight: 1, padding: '0 2px', flexShrink: 0 }}>×</button>}
+        {!readOnly && items.length > 1 && <button onClick={() => onChange(items.filter((_, j) => j !== i))} style={{ background: 'none', border: 'none', color: C.muted, cursor: 'pointer', fontSize: 18, lineHeight: 1, padding: '0 2px', flexShrink: 0 }}>×</button>}
       </div>
     ))}
-    <button onClick={() => onChange([...items, isPhone ? emptyPhone() : { value: '', type: types[0] }])} style={{ background: 'none', border: 'none', color: C.green, fontFamily: FF, fontSize: 12, cursor: 'pointer', padding: 0 }}>
-      + Add {addLabel}
-    </button>
+    {!readOnly && (
+      <button onClick={() => onChange([...items, isPhone ? emptyPhone() : { value: '', type: types[0] }])} style={{ background: 'none', border: 'none', color: C.green, fontFamily: FF, fontSize: 12, cursor: 'pointer', padding: 0 }}>
+        + Add {addLabel}
+      </button>
+    )}
   </div>
 );
 
-// ── Modal footer ──────────────────────────────────────────────────
+// ── Modal footers ─────────────────────────────────────────────────
 const ModalFooter: React.FC<{ onCancel: () => void; onSave: () => void }> = ({ onCancel, onSave }) => (
   <div style={{ display: 'flex', gap: 8, justifyContent: 'flex-end', marginTop: 20, paddingTop: 14, borderTop: `1px solid ${C.border}` }}>
     <button onClick={onCancel} style={{ padding: '8px 20px', borderRadius: 4, border: `1px solid ${C.borderMd}`, background: 'transparent', color: C.sub, fontFamily: FF, fontSize: 12, cursor: 'pointer' }}>Cancel</button>
@@ -463,16 +472,82 @@ const ModalFooter: React.FC<{ onCancel: () => void; onSave: () => void }> = ({ o
   </div>
 );
 
+const viewFooterBtn = (disabled?: boolean): React.CSSProperties => ({
+  padding: '8px 16px', borderRadius: 4, fontFamily: FF, fontSize: 12, fontWeight: 700, cursor: disabled ? 'not-allowed' : 'pointer',
+  opacity: disabled ? 0.45 : 1,
+});
+
+const ViewModalFooter: React.FC<{
+  editing: boolean;
+  isNew: boolean;
+  onEdit: () => void;
+  onDelete: () => void;
+  onSave: () => void;
+  onCancel: () => void;
+}> = ({ editing, isNew, onEdit, onDelete, onSave, onCancel }) => (
+  <div style={{ display: 'flex', gap: 8, justifyContent: 'flex-end', flexWrap: 'wrap', marginTop: 20, paddingTop: 14, borderTop: `1px solid ${C.border}` }}>
+    <button type="button" onClick={onEdit} disabled={editing} style={{ ...viewFooterBtn(editing), border: 'none', background: C.purple, color: '#fff' }}>Edit</button>
+    <button type="button" onClick={onDelete} disabled={isNew} style={{ ...viewFooterBtn(isNew), border: `1px solid ${C.red}`, background: 'transparent', color: C.red }}>Delete</button>
+    <button type="button" onClick={onSave} disabled={!editing} style={{ ...viewFooterBtn(!editing), border: 'none', background: C.green, color: '#fff' }}>Save</button>
+    <button type="button" onClick={onCancel} style={{ ...viewFooterBtn(), border: `1px solid ${C.borderMd}`, background: 'transparent', color: C.sub }}>Cancel</button>
+  </div>
+);
+
 // ── Person Modal ──────────────────────────────────────────────────
-const PersonModal: React.FC<{ initial: CrmPerson; companies: CrmCompany[]; onSave: (p: CrmPerson) => void; onClose: () => void }> = ({ initial, companies, onSave, onClose }) => {
+const PersonModal: React.FC<{
+  initial: CrmPerson;
+  companies: CrmCompany[];
+  isNew?: boolean;
+  openInView?: boolean;
+  onSave: (p: CrmPerson) => void;
+  onDelete?: (id: string) => void;
+  onClose: () => void;
+}> = ({ initial, companies, isNew = false, openInView = false, onSave, onDelete, onClose }) => {
+  const [editing, setEditing] = React.useState(isNew || !openInView);
   const [d, setD] = React.useState<CrmPerson>(() => normalizePerson(initial));
+  const snapshotRef = React.useRef<CrmPerson>(normalizePerson(initial));
   const set = <K extends keyof CrmPerson>(k: K, v: CrmPerson[K]): void => setD(p => ({ ...p, [k]: v }));
   const activities = d.activities ?? [];
   const attachments = d.attachments ?? [];
   const attachInputRef = React.useRef<HTMLInputElement>(null);
   const row2: React.CSSProperties = { display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 10 };
+  const readOnly = !editing;
 
-  React.useEffect(() => { setD(normalizePerson(initial)); }, [initial.id]);
+  React.useEffect(() => {
+    const n = normalizePerson(initial);
+    setD(n);
+    snapshotRef.current = n;
+    setEditing(isNew || !openInView);
+  }, [initial.id, isNew, openInView]);
+
+  const handleCancel = (): void => {
+    if (isNew) { onClose(); return; }
+    if (editing) {
+      setD(normalizePerson(snapshotRef.current));
+      setEditing(false);
+      return;
+    }
+    onClose();
+  };
+
+  const handleSave = (): void => {
+    if (!d.name.trim()) return;
+    const saved = normalizePerson(d);
+    onSave(saved);
+    snapshotRef.current = saved;
+    if (isNew) { onClose(); return; }
+    setEditing(false);
+  };
+
+  const handleDelete = (): void => {
+    if (!onDelete || isNew) return;
+    if (confirm('Delete this person?')) {
+      onDelete(d.id);
+      onClose();
+    }
+  };
+
+  const modalTitle = isNew ? 'Add Person' : editing ? 'Edit Person' : `View — ${d.name || 'Person'}`;
 
   const patchActivity = (idx: number, patch: Partial<CrmActivity>): void => {
     const next = [...activities];
@@ -509,10 +584,10 @@ const PersonModal: React.FC<{ initial: CrmPerson; companies: CrmCompany[]; onSav
   };
 
   return (
-    <Modal title={initial.name ? 'Edit Person' : 'Add Person'} onClose={onClose}>
+    <Modal title={modalTitle} onClose={onClose}>
       <div style={{ marginBottom: 14 }}>
         <label style={ml}>Name</label>
-        <input value={d.name} onChange={e => set('name', e.target.value)} style={mi} placeholder="Full name" autoFocus />
+        <input value={d.name} readOnly={readOnly} disabled={readOnly} onChange={e => set('name', e.target.value)} style={{ ...mi, opacity: readOnly ? 1 : undefined }} placeholder="Full name" autoFocus={editing} />
       </div>
       <div style={{ marginBottom: 14 }}>
         <label style={ml}>Company</label>
@@ -520,7 +595,7 @@ const PersonModal: React.FC<{ initial: CrmPerson; companies: CrmCompany[]; onSav
           <span style={{ position: 'absolute', left: 9, top: '50%', transform: 'translateY(-50%)', color: C.muted, pointerEvents: 'none' }}>
             <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><rect x="2" y="7" width="20" height="14" rx="2"/><path d="M16 7V5a2 2 0 0 0-4 0v2"/></svg>
           </span>
-          <select value={d.organizationId} onChange={e => set('organizationId', e.target.value)} style={{ ...mi, paddingLeft: 28 }}>
+          <select value={d.organizationId} disabled={readOnly} onChange={e => set('organizationId', e.target.value)} style={{ ...mi, paddingLeft: 28, opacity: readOnly ? 1 : undefined }}>
             <option value="">— None —</option>
             {companies.map(c => <option key={c.id} value={c.id}>{c.name}</option>)}
           </select>
@@ -528,20 +603,24 @@ const PersonModal: React.FC<{ initial: CrmPerson; companies: CrmCompany[]; onSav
       </div>
       <div style={{ marginBottom: 14 }}>
         <label style={ml}>Position</label>
-        <select value={d.position} onChange={e => set('position', e.target.value)} style={mi}>
+        <select value={d.position} disabled={readOnly} onChange={e => set('position', e.target.value)} style={{ ...mi, opacity: readOnly ? 1 : undefined }}>
           <option value="">— Select position —</option>
           {PERSON_POSITIONS.map(pos => <option key={pos} value={pos}>{pos}</option>)}
         </select>
       </div>
       <label style={ml}>Phone</label>
-      <MultiField items={d.phones} types={PHONE_TYPES} addLabel="phone" placeholder="Phone number" isPhone onChange={v => set('phones', v)} />
+      <MultiField items={d.phones} types={PHONE_TYPES} addLabel="phone" placeholder="Phone number" isPhone readOnly={readOnly} onChange={v => set('phones', v)} />
       <label style={ml}>Email</label>
-      <MultiField items={d.emails} types={EMAIL_TYPES} addLabel="email" placeholder="Email address" onChange={v => set('emails', v)} />
+      <MultiField items={d.emails} types={EMAIL_TYPES} addLabel="email" placeholder="Email address" readOnly={readOnly} onChange={v => set('emails', v)} />
 
       <div style={{ marginTop: 20, paddingTop: 16, borderTop: `1px solid ${C.border}` }}>
         <div style={{ fontFamily: FF, fontWeight: 700, fontSize: 11.5, letterSpacing: '.06em', textTransform: 'uppercase', color: C.text, marginBottom: 12 }}>
           Activity Log
         </div>
+
+        {activities.length === 0 && readOnly && (
+          <p style={{ fontFamily: FF, fontSize: 12, color: C.muted, margin: '0 0 12px 0' }}>No activities recorded.</p>
+        )}
 
         {activities.map((a, idx) => (
           <div
@@ -552,7 +631,7 @@ const PersonModal: React.FC<{ initial: CrmPerson; companies: CrmCompany[]; onSav
               opacity: a.done ? 0.85 : 1,
             }}
           >
-            {activities.length > 0 && (
+            {!readOnly && (
               <div style={{ display: 'flex', justifyContent: 'flex-end', marginBottom: 6 }}>
                 <button type="button" onClick={() => removeActivityRow(idx)} style={actDelBtn} title="Remove activity">×</button>
               </div>
@@ -560,11 +639,11 @@ const PersonModal: React.FC<{ initial: CrmPerson; companies: CrmCompany[]; onSav
             <div style={row2}>
               <div>
                 <label style={ml}>Date</label>
-                <input type="date" value={a.date} onChange={e => patchActivity(idx, { date: e.target.value })} style={mi} />
+                <input type="date" value={a.date} readOnly={readOnly} disabled={readOnly} onChange={e => patchActivity(idx, { date: e.target.value })} style={{ ...mi, opacity: readOnly ? 1 : undefined }} />
               </div>
               <div>
                 <label style={ml}>Type</label>
-                <select value={a.type} onChange={e => patchActivity(idx, { type: e.target.value as CrmActivityType })} style={mi}>
+                <select value={a.type} disabled={readOnly} onChange={e => patchActivity(idx, { type: e.target.value as CrmActivityType })} style={{ ...mi, opacity: readOnly ? 1 : undefined }}>
                   {ACTIVITY_TYPES.map(t => <option key={t} value={t}>{t}</option>)}
                 </select>
               </div>
@@ -573,23 +652,26 @@ const PersonModal: React.FC<{ initial: CrmPerson; companies: CrmCompany[]; onSav
               <label style={ml}>Notes</label>
               <textarea
                 value={a.notes}
+                readOnly={readOnly}
+                disabled={readOnly}
                 onChange={e => patchActivity(idx, { notes: e.target.value })}
                 placeholder="What was discussed…"
                 rows={3}
-                style={{ ...mi, resize: 'vertical', minHeight: 64 }}
+                style={{ ...mi, resize: 'vertical', minHeight: 64, opacity: readOnly ? 1 : undefined }}
               />
             </div>
             <div style={{ ...row2, marginTop: 10, alignItems: 'end' }}>
               <div>
                 <label style={ml}>Follow up date</label>
-                <input type="date" value={a.followUpDate} onChange={e => patchActivity(idx, { followUpDate: e.target.value })} style={mi} />
+                <input type="date" value={a.followUpDate} readOnly={readOnly} disabled={readOnly} onChange={e => patchActivity(idx, { followUpDate: e.target.value })} style={{ ...mi, opacity: readOnly ? 1 : undefined }} />
               </div>
-              <label style={{ display: 'flex', alignItems: 'center', gap: 8, fontFamily: FF, fontSize: 12.5, color: C.text, cursor: 'pointer', paddingBottom: 8 }}>
+              <label style={{ display: 'flex', alignItems: 'center', gap: 8, fontFamily: FF, fontSize: 12.5, color: C.text, cursor: readOnly ? 'default' : 'pointer', paddingBottom: 8 }}>
                 <input
                   type="checkbox"
                   checked={a.done}
+                  disabled={readOnly}
                   onChange={e => patchActivity(idx, { done: e.target.checked })}
-                  style={{ width: 16, height: 16, accentColor: C.green, cursor: 'pointer' }}
+                  style={{ width: 16, height: 16, accentColor: C.green, cursor: readOnly ? 'default' : 'pointer' }}
                 />
                 Mark as done
               </label>
@@ -597,23 +679,30 @@ const PersonModal: React.FC<{ initial: CrmPerson; companies: CrmCompany[]; onSav
           </div>
         ))}
 
-        {activities.length < 20 && (
+        {!readOnly && activities.length < 20 && (
           <button type="button" onClick={addActivityRow} style={addRowBtn}>+ Activity</button>
         )}
 
         <div style={{ marginTop: 18, paddingTop: 14, borderTop: `1px solid ${C.border}` }}>
           <label style={{ ...ml, marginBottom: 6 }}>Note Attachments (images / screenshots)</label>
-          <input
-            ref={attachInputRef}
-            type="file"
-            accept="image/*"
-            multiple
-            style={{ display: 'none' }}
-            onChange={e => { void addAttachments(e.target.files); e.target.value = ''; }}
-          />
-          <button type="button" onClick={() => attachInputRef.current?.click()} style={attachZoneBtn}>
-            + Click to attach pictures or screenshots…
-          </button>
+          {!readOnly && (
+            <>
+              <input
+                ref={attachInputRef}
+                type="file"
+                accept="image/*"
+                multiple
+                style={{ display: 'none' }}
+                onChange={e => { void addAttachments(e.target.files); e.target.value = ''; }}
+              />
+              <button type="button" onClick={() => attachInputRef.current?.click()} style={attachZoneBtn}>
+                + Click to attach pictures or screenshots…
+              </button>
+            </>
+          )}
+          {attachments.length === 0 && readOnly && (
+            <p style={{ fontFamily: FF, fontSize: 12, color: C.muted, margin: 0 }}>No attachments.</p>
+          )}
           {attachments.length > 0 && (
             <div style={{ marginTop: 10, display: 'flex', flexWrap: 'wrap', gap: 10 }}>
               {attachments.map(att => {
@@ -631,18 +720,20 @@ const PersonModal: React.FC<{ initial: CrmPerson; companies: CrmCompany[]; onSav
                     ) : (
                       <span style={{ display: 'block', padding: '6px 10px', fontSize: 11.5, color: C.green, fontFamily: FF }}>{att.name}</span>
                     )}
-                    <button
-                      type="button"
-                      onClick={() => removeAttachment(att.id)}
-                      title="Remove"
-                      style={{
-                        position: 'absolute', top: 2, right: 2, background: 'rgba(192,57,43,.9)', border: 'none',
-                        color: '#fff', borderRadius: 3, width: 18, height: 18, fontSize: 12, lineHeight: 1,
-                        cursor: 'pointer', fontWeight: 700,
-                      }}
-                    >
-                      ×
-                    </button>
+                    {!readOnly && (
+                      <button
+                        type="button"
+                        onClick={() => removeAttachment(att.id)}
+                        title="Remove"
+                        style={{
+                          position: 'absolute', top: 2, right: 2, background: 'rgba(192,57,43,.9)', border: 'none',
+                          color: '#fff', borderRadius: 3, width: 18, height: 18, fontSize: 12, lineHeight: 1,
+                          cursor: 'pointer', fontWeight: 700,
+                        }}
+                      >
+                        ×
+                      </button>
+                    )}
                   </div>
                 );
               })}
@@ -651,7 +742,14 @@ const PersonModal: React.FC<{ initial: CrmPerson; companies: CrmCompany[]; onSav
         </div>
       </div>
 
-      <ModalFooter onCancel={onClose} onSave={() => { if (d.name.trim()) onSave(normalizePerson(d)); }} />
+      <ViewModalFooter
+        editing={editing}
+        isNew={isNew}
+        onEdit={() => setEditing(true)}
+        onDelete={handleDelete}
+        onSave={handleSave}
+        onCancel={handleCancel}
+      />
     </Modal>
   );
 };
@@ -724,28 +822,80 @@ const CrmImportModal: React.FC<{
 };
 
 // ── Company Modal ─────────────────────────────────────────────────
-const CompanyModal: React.FC<{ initial: CrmCompany; onSave: (c: CrmCompany) => void; onClose: () => void }> = ({ initial, onSave, onClose }) => {
+const CompanyModal: React.FC<{
+  initial: CrmCompany;
+  isNew?: boolean;
+  openInView?: boolean;
+  onSave: (c: CrmCompany) => void;
+  onDelete?: (id: string) => void;
+  onClose: () => void;
+}> = ({ initial, isNew = false, openInView = false, onSave, onDelete, onClose }) => {
+  const [editing, setEditing] = React.useState(isNew || !openInView);
   const [d, setD] = React.useState<CrmCompany>(initial);
+  const snapshotRef = React.useRef<CrmCompany>(initial);
   const set = <K extends keyof CrmCompany>(k: K, v: CrmCompany[K]): void => setD(p => ({ ...p, [k]: v }));
+  const readOnly = !editing;
+
+  React.useEffect(() => {
+    setD(initial);
+    snapshotRef.current = initial;
+    setEditing(isNew || !openInView);
+  }, [initial.id, isNew, openInView]);
+
+  const handleCancel = (): void => {
+    if (isNew) { onClose(); return; }
+    if (editing) {
+      setD(snapshotRef.current);
+      setEditing(false);
+      return;
+    }
+    onClose();
+  };
+
+  const handleSave = (): void => {
+    if (!d.name.trim()) return;
+    onSave(d);
+    snapshotRef.current = d;
+    if (isNew) { onClose(); return; }
+    setEditing(false);
+  };
+
+  const handleDelete = (): void => {
+    if (!onDelete || isNew) return;
+    if (confirm('Delete this company?')) {
+      onDelete(d.id);
+      onClose();
+    }
+  };
+
+  const modalTitle = isNew ? 'Add Company' : editing ? 'Edit Company' : `View — ${d.name || 'Company'}`;
+
   return (
-    <Modal title={initial.name ? 'Edit Company' : 'Add Company'} onClose={onClose}>
+    <Modal title={modalTitle} onClose={onClose}>
       <div style={{ marginBottom: 14 }}>
         <label style={ml}>Name</label>
-        <input value={d.name} onChange={e => set('name', e.target.value)} style={mi} placeholder="Company name" autoFocus />
+        <input value={d.name} readOnly={readOnly} disabled={readOnly} onChange={e => set('name', e.target.value)} style={{ ...mi, opacity: readOnly ? 1 : undefined }} placeholder="Company name" autoFocus={editing} />
       </div>
       <div style={{ marginBottom: 14 }}>
         <label style={ml}>Labels</label>
-        <input value={d.labels} onChange={e => set('labels', e.target.value)} style={mi} placeholder="e.g. Client, Supplier, Partner" />
+        <input value={d.labels} readOnly={readOnly} disabled={readOnly} onChange={e => set('labels', e.target.value)} style={{ ...mi, opacity: readOnly ? 1 : undefined }} placeholder="e.g. Client, Supplier, Partner" />
       </div>
       <div style={{ marginBottom: 14 }}>
         <label style={ml}>Address</label>
-        <AddressSearch value={d.address} onChange={v => set('address', v)} />
+        <AddressSearch value={d.address} readOnly={readOnly} onChange={v => set('address', v)} />
       </div>
       <label style={ml}>Phone</label>
-      <MultiField items={d.phones} types={PHONE_TYPES} addLabel="phone" placeholder="Phone number" isPhone onChange={v => set('phones', v)} />
+      <MultiField items={d.phones} types={PHONE_TYPES} addLabel="phone" placeholder="Phone number" isPhone readOnly={readOnly} onChange={v => set('phones', v)} />
       <label style={ml}>Email</label>
-      <MultiField items={d.emails} types={EMAIL_TYPES} addLabel="email" placeholder="Email address" onChange={v => set('emails', v)} />
-      <ModalFooter onCancel={onClose} onSave={() => { if (d.name.trim()) onSave(d); }} />
+      <MultiField items={d.emails} types={EMAIL_TYPES} addLabel="email" placeholder="Email address" readOnly={readOnly} onChange={v => set('emails', v)} />
+      <ViewModalFooter
+        editing={editing}
+        isNew={isNew}
+        onEdit={() => setEditing(true)}
+        onDelete={handleDelete}
+        onSave={handleSave}
+        onCancel={handleCancel}
+      />
     </Modal>
   );
 };
@@ -851,8 +1001,10 @@ const CrmBoard: React.FC<CrmBoardProps> = ({ spService }) => {
   const [crmReady, setCrmReady]   = React.useState(false);
   const [syncState, setSyncState] = React.useState<'loading' | 'saving' | 'synced' | 'error'>('loading');
   const [syncError, setSyncError] = React.useState('');
-  const [personModal, setPersonModal]   = React.useState<CrmPerson | null>(null);
-  const [companyModal, setCompanyModal] = React.useState<CrmCompany | null>(null);
+  type PersonModalState = { person: CrmPerson; isNew: boolean; openInView: boolean };
+  type CompanyModalState = { company: CrmCompany; isNew: boolean; openInView: boolean };
+  const [personModal, setPersonModal]   = React.useState<PersonModalState | null>(null);
+  const [companyModal, setCompanyModal] = React.useState<CompanyModalState | null>(null);
   const [importModal, setImportModal]   = React.useState(false);
   const [search, setSearch]             = React.useState('');
   const [personSort, setPersonSort]     = React.useState<{ key: PersonSortKey; dir: SortDir } | null>(null);
@@ -910,10 +1062,10 @@ const CrmBoard: React.FC<CrmBoardProps> = ({ spService }) => {
     };
   }, [persons, companies, crmReady, flushSave]);
 
-  const savePerson    = (p: CrmPerson):  void => { setPersons(prev  => prev.some(x => x.id === p.id) ? prev.map(x => x.id === p.id ? p : x) : [...prev, p]);   setPersonModal(null); };
-  const deletePerson  = (id: string):    void => { if (confirm('Delete this person?'))  setPersons(prev  => prev.filter(x => x.id !== id)); };
-  const saveCompany   = (c: CrmCompany): void => { setCompanies(prev => prev.some(x => x.id === c.id) ? prev.map(x => x.id === c.id ? c : x) : [...prev, c]); setCompanyModal(null); };
-  const deleteCompany = (id: string):    void => { if (confirm('Delete this company?')) setCompanies(prev => prev.filter(x => x.id !== id)); };
+  const savePerson    = (p: CrmPerson):  void => { setPersons(prev  => prev.some(x => x.id === p.id) ? prev.map(x => x.id === p.id ? p : x) : [...prev, p]); };
+  const deletePerson  = (id: string):    void => { setPersons(prev  => prev.filter(x => x.id !== id)); };
+  const saveCompany   = (c: CrmCompany): void => { setCompanies(prev => prev.some(x => x.id === c.id) ? prev.map(x => x.id === c.id ? c : x) : [...prev, c]); };
+  const deleteCompany = (id: string):    void => { setCompanies(prev => prev.filter(x => x.id !== id)); };
   const companyName   = (id: string):    string => companies.find(c => c.id === id)?.name || '';
   const companyAddress = (id: string):   string => companies.find(c => c.id === id)?.address || '';
 
@@ -1008,12 +1160,9 @@ const CrmBoard: React.FC<CrmBoardProps> = ({ spService }) => {
     textAlign: 'center',
   };
 
-  const ActionCell: React.FC<{ onEdit: () => void; onDel: () => void }> = ({ onEdit, onDel }) => (
+  const ViewCell: React.FC<{ onView: () => void }> = ({ onView }) => (
     <td style={{ padding: '8px 10px 8px 6px', borderBottom: `1px solid ${C.border}`, verticalAlign: 'middle' }}>
-      <div style={{ display: 'flex', flexDirection: 'column', gap: 4, minWidth: 52 }}>
-        <button onClick={onEdit} style={{ ...actionBtn, border: 'none', background: C.purple, color: '#fff' }}>Edit</button>
-        <button onClick={onDel}  style={{ ...actionBtn, border: `1px solid ${C.red}`, background: 'transparent', color: C.red }}>Del</button>
-      </div>
+      <button onClick={onView} style={{ ...actionBtn, border: 'none', background: C.purple, color: '#fff' }}>View</button>
     </td>
   );
 
@@ -1066,9 +1215,9 @@ const CrmBoard: React.FC<CrmBoardProps> = ({ spService }) => {
               Import
             </button>
             {tab === 'persons' ? (
-              <button onClick={() => setPersonModal(emptyPerson())} style={{ padding: '7px 16px', borderRadius: 4, border: 'none', background: C.green, color: '#fff', fontFamily: FF, fontWeight: 700, fontSize: 12, cursor: 'pointer', whiteSpace: 'nowrap' }}>+ Person</button>
+              <button onClick={() => setPersonModal({ person: emptyPerson(), isNew: true, openInView: false })} style={{ padding: '7px 16px', borderRadius: 4, border: 'none', background: C.green, color: '#fff', fontFamily: FF, fontWeight: 700, fontSize: 12, cursor: 'pointer', whiteSpace: 'nowrap' }}>+ Person</button>
             ) : (
-              <button onClick={() => setCompanyModal(emptyCompany())} style={{ padding: '7px 16px', borderRadius: 4, border: 'none', background: C.green, color: '#fff', fontFamily: FF, fontWeight: 700, fontSize: 12, cursor: 'pointer', whiteSpace: 'nowrap' }}>+ Company</button>
+              <button onClick={() => setCompanyModal({ company: emptyCompany(), isNew: true, openInView: false })} style={{ padding: '7px 16px', borderRadius: 4, border: 'none', background: C.green, color: '#fff', fontFamily: FF, fontWeight: 700, fontSize: 12, cursor: 'pointer', whiteSpace: 'nowrap' }}>+ Company</button>
             )}
           </div>
         )}
@@ -1139,7 +1288,7 @@ const CrmBoard: React.FC<CrmBoardProps> = ({ spService }) => {
                     </Td>
                     <Td><span style={{ color: C.sub, fontWeight: 600 }} title={firstPhone(p.phones)}>{firstPhone(p.phones)}</span></Td>
                     <Td><span style={{ color: C.sub, fontWeight: 600 }} title={firstEmail(p.emails)}>{firstEmail(p.emails)}</span></Td>
-                    <ActionCell onEdit={() => setPersonModal(normalizePerson(p))} onDel={() => deletePerson(p.id)} />
+                    <ViewCell onView={() => setPersonModal({ person: normalizePerson(p), isNew: false, openInView: true })} />
                   </tr>
                 ))
               }
@@ -1208,7 +1357,7 @@ const CrmBoard: React.FC<CrmBoardProps> = ({ spService }) => {
                       <Td><span style={{ color: C.sub, fontWeight: 600 }} title={firstPhone(c.phones)}>{firstPhone(c.phones)}</span></Td>
                       <Td><span style={{ color: C.sub, fontWeight: 600 }} title={firstEmail(c.emails)}>{firstEmail(c.emails)}</span></Td>
                       <Td muted><span title={c.address}>{c.address || '—'}</span></Td>
-                      <ActionCell onEdit={() => setCompanyModal({ ...c })} onDel={() => deleteCompany(c.id)} />
+                      <ViewCell onView={() => setCompanyModal({ company: { ...c }, isNew: false, openInView: true })} />
                     </tr>
                   );
                 })
@@ -1240,8 +1389,27 @@ const CrmBoard: React.FC<CrmBoardProps> = ({ spService }) => {
       )}
 
       {/* ── Modals */}
-      {personModal  && <PersonModal  initial={personModal}  companies={companies} onSave={savePerson}  onClose={() => setPersonModal(null)}  />}
-      {companyModal && <CompanyModal initial={companyModal}                        onSave={saveCompany} onClose={() => setCompanyModal(null)} />}
+      {personModal && (
+        <PersonModal
+          initial={personModal.person}
+          companies={companies}
+          isNew={personModal.isNew}
+          openInView={personModal.openInView}
+          onSave={savePerson}
+          onDelete={deletePerson}
+          onClose={() => setPersonModal(null)}
+        />
+      )}
+      {companyModal && (
+        <CompanyModal
+          initial={companyModal.company}
+          isNew={companyModal.isNew}
+          openInView={companyModal.openInView}
+          onSave={saveCompany}
+          onDelete={deleteCompany}
+          onClose={() => setCompanyModal(null)}
+        />
+      )}
       {importModal   && <CrmImportModal onClose={() => setImportModal(false)} onImport={handleImport} />}
       </>
       )}
