@@ -464,9 +464,14 @@ export class SharePointService {
 
   // ── Settings (key-value store) ─────────────────────────────
 
+  private static oDataStr(s: string): string {
+    return s.replace(/'/g, "''");
+  }
+
   public async getSetting(key: string): Promise<string | undefined> {
     try {
-      const d = await this.spGet(`/_api/web/lists/getbytitle('${LIST_SETTINGS}')/items?$filter=Title eq '${key}'&$top=1`);
+      const k = SharePointService.oDataStr(key);
+      const d = await this.spGet(`/_api/web/lists/getbytitle('${LIST_SETTINGS}')/items?$filter=Title eq '${k}'&$top=1`);
       const items = d.value || [];
       return items.length > 0 ? (items[0].Value || '') : undefined;
     } catch { return undefined; }
@@ -474,13 +479,61 @@ export class SharePointService {
 
   public async setSetting(key: string, value: string): Promise<void> {
     try {
-      const d = await this.spGet(`/_api/web/lists/getbytitle('${LIST_SETTINGS}')/items?$filter=Title eq '${key}'&$top=1`);
-      const items = d.value || [];
-      if (items.length > 0) {
-        await this.spMerge(`/_api/web/lists/getbytitle('${LIST_SETTINGS}')/items(${items[0].Id})`, { Value: value });
-      } else {
-        await this.spPost(`/_api/web/lists/getbytitle('${LIST_SETTINGS}')/items`, { Title: key, Value: value });
-      }
+      await this.setSettingStrict(key, value);
     } catch { /* fail silently — non-critical */ }
+  }
+
+  public async setSettingStrict(key: string, value: string): Promise<void> {
+    const k = SharePointService.oDataStr(key);
+    const d = await this.spGet(`/_api/web/lists/getbytitle('${LIST_SETTINGS}')/items?$filter=Title eq '${k}'&$top=1`);
+    const items = d.value || [];
+    if (items.length > 0) {
+      await this.spMerge(`/_api/web/lists/getbytitle('${LIST_SETTINGS}')/items(${items[0].Id})`, { Value: value });
+    } else {
+      await this.spPost(`/_api/web/lists/getbytitle('${LIST_SETTINGS}')/items`, { Title: key, Value: value });
+    }
+  }
+
+  /** Read large JSON blobs split across multiple settings rows (max ~58k chars each). */
+  public async getSettingChunks(baseKey: string): Promise<string | null> {
+    const metaRaw = await this.getSetting(`${baseKey}__meta`);
+    if (!metaRaw) return null;
+    try {
+      const meta = JSON.parse(metaRaw) as { chunks: number };
+      let out = '';
+      for (let i = 0; i < meta.chunks; i++) {
+        const part = await this.getSetting(`${baseKey}__${i}`);
+        if (part === undefined) return null;
+        out += part;
+      }
+      return out;
+    } catch {
+      return null;
+    }
+  }
+
+  /** Write large JSON blobs to settings (shared across all site users). */
+  public async setSettingChunks(baseKey: string, value: string): Promise<void> {
+    const CHUNK = 58000;
+    const parts: string[] = [];
+    for (let i = 0; i < value.length; i += CHUNK) {
+      parts.push(value.slice(i, i + CHUNK));
+    }
+    for (let i = 0; i < parts.length; i++) {
+      await this.setSettingStrict(`${baseKey}__${i}`, parts[i]);
+    }
+    const oldMeta = await this.getSetting(`${baseKey}__meta`);
+    if (oldMeta) {
+      try {
+        const old = JSON.parse(oldMeta) as { chunks: number };
+        for (let i = parts.length; i < old.chunks; i++) {
+          await this.setSettingStrict(`${baseKey}__${i}`, '');
+        }
+      } catch { /* ignore */ }
+    }
+    await this.setSettingStrict(
+      `${baseKey}__meta`,
+      JSON.stringify({ chunks: parts.length, updated: new Date().toISOString() }),
+    );
   }
 }

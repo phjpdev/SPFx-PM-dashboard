@@ -2624,7 +2624,7 @@ const ManagerDashboard: React.FC<IManagerDashboardProps> = (props) => {
                 )}
               </div>
             ) : (
-              <CrmBoard />
+              <CrmBoard spService={spService.current} />
             )}
           </div>
         )}

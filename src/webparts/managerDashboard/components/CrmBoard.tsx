@@ -1,7 +1,13 @@
 import * as React from 'react';
 import { runCrmImport } from './crmImport';
+import { loadCrmFromSharePoint, saveCompaniesAndPersons } from './crmStorage';
 import CrmRfqTab from './CrmRfqTab';
+import type { SharePointService } from '../../../shared/services/SharePointService';
 import type { CrmPhone, CrmEmail, CrmPerson, CrmCompany, CrmActivity, CrmActivityType, CrmAttachment } from './crmTypes';
+
+export interface CrmBoardProps {
+  spService: SharePointService;
+}
 
 export type { CrmPerson, CrmCompany, CrmActivity } from './crmTypes';
 
@@ -838,10 +844,13 @@ const TdIndex: React.FC<{ children: React.ReactNode }> = ({ children }) => (
 );
 
 // ── CrmBoard ──────────────────────────────────────────────────────
-const CrmBoard: React.FC = () => {
+const CrmBoard: React.FC<CrmBoardProps> = ({ spService }) => {
   const [tab, setTab]             = React.useState<CrmTab>('persons');
-  const [persons, setPersons]     = React.useState<CrmPerson[]>(() => loadLS<CrmPerson[]>(LS_PERSONS, []));
-  const [companies, setCompanies] = React.useState<CrmCompany[]>(() => loadLS<CrmCompany[]>(LS_COMPANIES, []));
+  const [persons, setPersons]     = React.useState<CrmPerson[]>([]);
+  const [companies, setCompanies] = React.useState<CrmCompany[]>([]);
+  const [crmReady, setCrmReady]   = React.useState(false);
+  const [syncState, setSyncState] = React.useState<'loading' | 'saving' | 'synced' | 'error'>('loading');
+  const [syncError, setSyncError] = React.useState('');
   const [personModal, setPersonModal]   = React.useState<CrmPerson | null>(null);
   const [companyModal, setCompanyModal] = React.useState<CrmCompany | null>(null);
   const [importModal, setImportModal]   = React.useState(false);
@@ -849,8 +858,57 @@ const CrmBoard: React.FC = () => {
   const [personSort, setPersonSort]     = React.useState<{ key: PersonSortKey; dir: SortDir } | null>(null);
   const [companySort, setCompanySort] = React.useState<{ key: CompanySortKey; dir: SortDir } | null>(null);
 
-  React.useEffect(() => { localStorage.setItem(LS_PERSONS,   JSON.stringify(persons));   }, [persons]);
-  React.useEffect(() => { localStorage.setItem(LS_COMPANIES, JSON.stringify(companies)); }, [companies]);
+  const personsRef = React.useRef(persons);
+  const companiesRef = React.useRef(companies);
+  personsRef.current = persons;
+  companiesRef.current = companies;
+  const saveTimerRef = React.useRef<ReturnType<typeof setTimeout> | null>(null);
+
+  React.useEffect(() => {
+    let cancelled = false;
+    void (async () => {
+      setSyncState('loading');
+      try {
+        const data = await loadCrmFromSharePoint(spService);
+        if (cancelled) return;
+        setCompanies(data.companies);
+        setPersons(data.persons);
+        setSyncState('synced');
+      } catch (e) {
+        if (cancelled) return;
+        setCompanies(loadLS<CrmCompany[]>(LS_COMPANIES, []));
+        setPersons(loadLS<CrmPerson[]>(LS_PERSONS, []));
+        setSyncState('error');
+        setSyncError(e instanceof Error ? e.message : 'Could not load CRM from SharePoint');
+      } finally {
+        if (!cancelled) setCrmReady(true);
+      }
+    })();
+    return () => { cancelled = true; };
+  }, [spService]);
+
+  const flushSave = React.useCallback(async (): Promise<void> => {
+    try {
+      setSyncState('saving');
+      await saveCompaniesAndPersons(spService, companiesRef.current, personsRef.current);
+      setSyncState('synced');
+      setSyncError('');
+    } catch (e) {
+      setSyncState('error');
+      setSyncError(e instanceof Error ? e.message : 'Could not save CRM to SharePoint');
+    }
+  }, [spService]);
+
+  React.useEffect(() => {
+    if (!crmReady) return;
+    localStorage.setItem(LS_PERSONS, JSON.stringify(persons));
+    localStorage.setItem(LS_COMPANIES, JSON.stringify(companies));
+    if (saveTimerRef.current) clearTimeout(saveTimerRef.current);
+    saveTimerRef.current = setTimeout(() => { void flushSave(); }, 2000);
+    return () => {
+      if (saveTimerRef.current) clearTimeout(saveTimerRef.current);
+    };
+  }, [persons, companies, crmReady, flushSave]);
 
   const savePerson    = (p: CrmPerson):  void => { setPersons(prev  => prev.some(x => x.id === p.id) ? prev.map(x => x.id === p.id ? p : x) : [...prev, p]);   setPersonModal(null); };
   const deletePerson  = (id: string):    void => { if (confirm('Delete this person?'))  setPersons(prev  => prev.filter(x => x.id !== id)); };
@@ -864,6 +922,10 @@ const CrmBoard: React.FC = () => {
     setCompanies(nextCo);
     setPersons(nextPe);
     setImportModal(false);
+    if (saveTimerRef.current) clearTimeout(saveTimerRef.current);
+    companiesRef.current = nextCo;
+    personsRef.current = nextPe;
+    void flushSave();
   };
 
   const q = search.toLowerCase();
@@ -959,9 +1021,28 @@ const CrmBoard: React.FC = () => {
     <tr><td colSpan={colspan} style={{ padding: '40px 0', textAlign: 'center', fontFamily: FF, fontSize: 13, color: C.muted, borderBottom: `1px solid ${C.border}` }}>{msg}</td></tr>
   );
 
+  const syncLabel =
+    syncState === 'loading' ? 'Loading CRM from SharePoint…'
+    : syncState === 'saving' ? 'Saving to SharePoint…'
+    : syncState === 'error' ? `SharePoint sync issue: ${syncError}`
+    : 'CRM synced for all users on this site';
+
   return (
     <div style={{ background: C.bg, minHeight: 400, borderRadius: 8, padding: '0 0 24px 0', width: '100%', maxWidth: '100%', boxSizing: 'border-box' }}>
 
+      <div style={{
+        padding: '8px 12px', marginBottom: 8, borderRadius: 4, fontFamily: FF, fontSize: 11, fontWeight: 600,
+        color: syncState === 'error' ? C.red : syncState === 'synced' ? C.green : C.sub,
+        background: syncState === 'error' ? 'rgba(192,57,43,.08)' : syncState === 'synced' ? C.greenBg : C.thBg,
+        border: `1px solid ${syncState === 'error' ? 'rgba(192,57,43,.3)' : syncState === 'synced' ? C.greenBd : C.border}`,
+      }}>
+        {syncLabel}
+      </div>
+
+      {!crmReady ? (
+        <div style={{ padding: 48, textAlign: 'center', fontFamily: FF, fontSize: 13, color: C.muted }}>Loading CRM…</div>
+      ) : (
+      <>
       {/* ── Toolbar */}
       <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-end', marginBottom: 0, padding: '16px 0 0 0' }}>
         <div style={{ display: 'flex', gap: 0, borderBottom: `1px solid ${C.border}`, paddingBottom: 0 }}>
@@ -1147,8 +1228,8 @@ const CrmBoard: React.FC = () => {
       )}
 
       {tab === 'rfq' && (
-        <div style={{ background: C.surface, border: `1px solid ${C.border}`, borderTop: 'none', borderRadius: '0 0 8px 8px', padding: '0 16px 16px 16px' }}>
-          <CrmRfqTab persons={persons} companies={companies} />
+        <div style={{ background: C.surface, border: `1px solid ${C.border}`, borderTop: 'none', borderRadius: '0 0 8px 8px', padding: '0 16px 16px 16px', overflowX: 'hidden', maxWidth: '100%', boxSizing: 'border-box' }}>
+          <CrmRfqTab spService={spService} persons={persons} companies={companies} />
         </div>
       )}
 
@@ -1162,6 +1243,8 @@ const CrmBoard: React.FC = () => {
       {personModal  && <PersonModal  initial={personModal}  companies={companies} onSave={savePerson}  onClose={() => setPersonModal(null)}  />}
       {companyModal && <CompanyModal initial={companyModal}                        onSave={saveCompany} onClose={() => setCompanyModal(null)} />}
       {importModal   && <CrmImportModal onClose={() => setImportModal(false)} onImport={handleImport} />}
+      </>
+      )}
     </div>
   );
 };
