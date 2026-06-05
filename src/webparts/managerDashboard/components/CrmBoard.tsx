@@ -1,6 +1,7 @@
 import * as React from 'react';
 import { runCrmImport } from './crmImport';
-import { cloneStaticCrm, CRM_STATIC_COMPANIES, CRM_STATIC_PERSONS } from './crmStaticData';
+import { loadCrmDelta, loadCrmPersonsCompanies, saveCrmPersonsCompanies } from './crmStorage';
+import { cloneStaticCrm } from './crmStaticData';
 import CrmRfqTab from './CrmRfqTab';
 import type { SharePointService } from '../../../shared/services/SharePointService';
 import type { CrmPhone, CrmEmail, CrmPerson, CrmCompany, CrmActivity, CrmActivityType, CrmAttachment } from './crmTypes';
@@ -272,6 +273,20 @@ const emptyActivity = (): CrmActivity => ({
   done: false,
 });
 
+const fmtActDate = (iso: string): string => {
+  if (!iso) return '—';
+  const d = new Date(iso + 'T00:00:00');
+  return isNaN(d.getTime()) ? iso : d.toLocaleDateString('en-AU', { day: 'numeric', month: 'short', year: 'numeric' });
+};
+
+const sortActivitiesNewest = (acts: CrmActivity[]): CrmActivity[] =>
+  [...acts].sort((a, b) => {
+    const cmp = (b.date || '').localeCompare(a.date || '');
+    return cmp !== 0 ? cmp : (b.id || '').localeCompare(a.id || '');
+  });
+
+const jsonEq = (a: unknown, b: unknown): boolean => JSON.stringify(a) === JSON.stringify(b);
+
 const normalizePerson = (p: CrmPerson): CrmPerson => ({
   ...p,
   activities: (p.activities ?? []).map(a => (a.id ? a : { ...a, id: uid() })),
@@ -381,15 +396,38 @@ const AddressSearch: React.FC<{ value: string; onChange: (v: string) => void; re
 };
 
 // ── Modal wrapper (light) ─────────────────────────────────────────
-const Modal: React.FC<{ title: string; onClose: () => void; children: React.ReactNode }> = ({ title, onClose, children }) => (
-  <div style={{ position: 'fixed', inset: 0, background: 'rgba(0,0,0,.45)', zIndex: 1000, display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
-    <div style={{ background: C.surface, borderRadius: 8, width: 520, maxHeight: '90vh', overflowY: 'auto', boxShadow: '0 12px 40px rgba(0,0,0,.18)', border: `1px solid ${C.border}` }}>
-      <div style={{ padding: '14px 20px', borderBottom: `1px solid ${C.border}`, display: 'flex', justifyContent: 'space-between', alignItems: 'center', background: C.thBg, borderRadius: '8px 8px 0 0' }}>
+const Modal: React.FC<{ title: string; onClose: () => void; children: React.ReactNode; width?: number }> = ({ title, onClose, children, width = 520 }) => (
+  <div style={{ position: 'fixed', inset: 0, background: 'rgba(0,0,0,.45)', zIndex: 1000, display: 'flex', alignItems: 'center', justifyContent: 'center', padding: 16 }}>
+    <div style={{ background: C.surface, borderRadius: 8, width, maxWidth: '96vw', maxHeight: '90vh', overflowY: 'auto', boxShadow: '0 12px 40px rgba(0,0,0,.18)', border: `1px solid ${C.border}` }}>
+      <div style={{ padding: '14px 20px', borderBottom: `1px solid ${C.border}`, display: 'flex', justifyContent: 'space-between', alignItems: 'center', background: C.thBg, borderRadius: '8px 8px 0 0', position: 'sticky', top: 0, zIndex: 1 }}>
         <span style={{ fontFamily: FF, fontWeight: 700, fontSize: 13, color: C.text, letterSpacing: '.04em' }}>{title}</span>
         <button onClick={onClose} style={{ background: 'none', border: 'none', color: C.muted, cursor: 'pointer', fontSize: 20, lineHeight: 1, padding: 0 }}>×</button>
       </div>
       <div style={{ padding: '20px 22px' }}>{children}</div>
     </div>
+  </div>
+);
+
+const ActivityReadCard: React.FC<{ activity: CrmActivity }> = ({ activity: a }) => (
+  <div style={{
+    marginBottom: 10, padding: '10px 12px', borderRadius: 6, background: C.thBg,
+    border: `1px solid ${C.border}`, opacity: a.done ? 0.85 : 1,
+  }}>
+    <div style={{ display: 'flex', justifyContent: 'space-between', gap: 8, marginBottom: 6 }}>
+      <span style={{ fontFamily: FF, fontSize: 11, fontWeight: 700, color: C.green }}>{a.type}</span>
+      <span style={{ fontFamily: FF, fontSize: 10, color: C.muted }}>{fmtActDate(a.date)}</span>
+    </div>
+    {a.notes && (
+      <div style={{ fontFamily: FF, fontSize: 12, color: C.text, lineHeight: 1.45, whiteSpace: 'pre-wrap' }}>{a.notes}</div>
+    )}
+    {a.followUpDate && (
+      <div style={{ fontFamily: FF, fontSize: 10.5, color: C.sub, marginTop: 6 }}>
+        Follow up: {fmtActDate(a.followUpDate)}
+      </div>
+    )}
+    {a.done && (
+      <div style={{ fontFamily: FF, fontSize: 10, fontWeight: 700, color: C.green, marginTop: 4 }}>Done</div>
+    )}
   </div>
 );
 
@@ -502,6 +540,7 @@ const PersonModal: React.FC<{
   onClose: () => void;
 }> = ({ initial, companies, isNew = false, openInView = false, onSave, onDelete, onClose }) => {
   const [editing, setEditing] = React.useState(isNew || !openInView);
+  const [draftActivityIds, setDraftActivityIds] = React.useState<string[]>([]);
   const [d, setD] = React.useState<CrmPerson>(() => normalizePerson(initial));
   const snapshotRef = React.useRef<CrmPerson>(normalizePerson(initial));
   const set = <K extends keyof CrmPerson>(k: K, v: CrmPerson[K]): void => setD(p => ({ ...p, [k]: v }));
@@ -512,11 +551,18 @@ const PersonModal: React.FC<{
   const readOnly = !editing;
 
   React.useEffect(() => {
-    const n = normalizePerson(initial);
-    setD(n);
-    snapshotRef.current = n;
     setEditing(isNew || !openInView);
+    setDraftActivityIds([]);
   }, [initial.id, isNew, openInView]);
+
+  React.useEffect(() => {
+    if (editing) return;
+    const n = normalizePerson(initial);
+    if (!jsonEq(n, snapshotRef.current)) {
+      setD(n);
+      snapshotRef.current = n;
+    }
+  }, [initial, editing]);
 
   const handleCancel = (): void => {
     if (isNew) { onClose(); return; }
@@ -532,9 +578,7 @@ const PersonModal: React.FC<{
     if (!d.name.trim()) return;
     const saved = normalizePerson(d);
     onSave(saved);
-    snapshotRef.current = saved;
-    if (isNew) { onClose(); return; }
-    setEditing(false);
+    onClose();
   };
 
   const handleDelete = (): void => {
@@ -553,8 +597,16 @@ const PersonModal: React.FC<{
     set('activities', next);
   };
 
-  const addActivityRow = (): void => set('activities', [...activities, emptyActivity()]);
-  const removeActivityRow = (idx: number): void => set('activities', activities.filter((_, i) => i !== idx));
+  const addActivityRow = (): void => {
+    const a = emptyActivity();
+    setDraftActivityIds(prev => [...prev, a.id]);
+    set('activities', [...activities, a]);
+  };
+  const removeActivityRow = (idx: number): void => {
+    const removed = activities[idx];
+    if (removed) setDraftActivityIds(prev => prev.filter(id => id !== removed.id));
+    set('activities', activities.filter((_, i) => i !== idx));
+  };
 
   const addAttachments = async (files: FileList | null): Promise<void> => {
     if (!files?.length) return;
@@ -581,162 +633,177 @@ const PersonModal: React.FC<{
     padding: '8px 12px', fontSize: 12, color: C.muted, width: '100%', textAlign: 'left',
   };
 
+  const draftIdSet = React.useMemo(() => new Set(draftActivityIds), [draftActivityIds]);
+  const historicalActivities = sortActivitiesNewest(activities.filter(a => !draftIdSet.has(a.id)));
+  const draftActivities = activities.filter(a => draftIdSet.has(a.id));
+  const sortedActivities = sortActivitiesNewest(activities);
+
   return (
-    <Modal title={modalTitle} onClose={onClose}>
-      <div style={{ marginBottom: 14 }}>
-        <label style={ml}>Name</label>
-        <input value={d.name} readOnly={readOnly} disabled={readOnly} onChange={e => set('name', e.target.value)} style={{ ...mi, opacity: readOnly ? 1 : undefined }} placeholder="Full name" autoFocus={editing} />
-      </div>
-      <div style={{ marginBottom: 14 }}>
-        <label style={ml}>Company</label>
-        <div style={{ position: 'relative' }}>
-          <span style={{ position: 'absolute', left: 9, top: '50%', transform: 'translateY(-50%)', color: C.muted, pointerEvents: 'none' }}>
-            <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><rect x="2" y="7" width="20" height="14" rx="2"/><path d="M16 7V5a2 2 0 0 0-4 0v2"/></svg>
-          </span>
-          <select value={d.organizationId} disabled={readOnly} onChange={e => set('organizationId', e.target.value)} style={{ ...mi, paddingLeft: 28, opacity: readOnly ? 1 : undefined }}>
-            <option value="">— None —</option>
-            {companies.map(c => <option key={c.id} value={c.id}>{c.name}</option>)}
-          </select>
-        </div>
-      </div>
-      <div style={{ marginBottom: 14 }}>
-        <label style={ml}>Position</label>
-        <select value={d.position} disabled={readOnly} onChange={e => set('position', e.target.value)} style={{ ...mi, opacity: readOnly ? 1 : undefined }}>
-          <option value="">— Select position —</option>
-          {PERSON_POSITIONS.map(pos => <option key={pos} value={pos}>{pos}</option>)}
-        </select>
-      </div>
-      <label style={ml}>Phone</label>
-      <MultiField items={d.phones} types={PHONE_TYPES} addLabel="phone" placeholder="Phone number" isPhone readOnly={readOnly} onChange={v => set('phones', v)} />
-      <label style={ml}>Email</label>
-      <MultiField items={d.emails} types={EMAIL_TYPES} addLabel="email" placeholder="Email address" readOnly={readOnly} onChange={v => set('emails', v)} />
-
-      <div style={{ marginTop: 20, paddingTop: 16, borderTop: `1px solid ${C.border}` }}>
-        <div style={{ fontFamily: FF, fontWeight: 700, fontSize: 11.5, letterSpacing: '.06em', textTransform: 'uppercase', color: C.text, marginBottom: 12 }}>
-          Activity Log
-        </div>
-
-        {activities.length === 0 && readOnly && (
-          <p style={{ fontFamily: FF, fontSize: 12, color: C.muted, margin: '0 0 12px 0' }}>No activities recorded.</p>
-        )}
-
-        {activities.map((a, idx) => (
-          <div
-            key={a.id}
-            style={{
-              marginBottom: 14, paddingBottom: 14,
-              borderBottom: idx < activities.length - 1 ? `1px solid ${C.border}` : 'none',
-              opacity: a.done ? 0.85 : 1,
-            }}
-          >
-            {!readOnly && (
-              <div style={{ display: 'flex', justifyContent: 'flex-end', marginBottom: 6 }}>
-                <button type="button" onClick={() => removeActivityRow(idx)} style={actDelBtn} title="Remove activity">×</button>
-              </div>
-            )}
-            <div style={row2}>
-              <div>
-                <label style={ml}>Date</label>
-                <input type="date" value={a.date} readOnly={readOnly} disabled={readOnly} onChange={e => patchActivity(idx, { date: e.target.value })} style={{ ...mi, opacity: readOnly ? 1 : undefined }} />
-              </div>
-              <div>
-                <label style={ml}>Type</label>
-                <select value={a.type} disabled={readOnly} onChange={e => patchActivity(idx, { type: e.target.value as CrmActivityType })} style={{ ...mi, opacity: readOnly ? 1 : undefined }}>
-                  {ACTIVITY_TYPES.map(t => <option key={t} value={t}>{t}</option>)}
-                </select>
-              </div>
-            </div>
-            <div style={{ marginTop: 10 }}>
-              <label style={ml}>Notes</label>
-              <textarea
-                value={a.notes}
-                readOnly={readOnly}
-                disabled={readOnly}
-                onChange={e => patchActivity(idx, { notes: e.target.value })}
-                placeholder="What was discussed…"
-                rows={3}
-                style={{ ...mi, resize: 'vertical', minHeight: 64, opacity: readOnly ? 1 : undefined }}
-              />
-            </div>
-            <div style={{ ...row2, marginTop: 10, alignItems: 'end' }}>
-              <div>
-                <label style={ml}>Follow up date</label>
-                <input type="date" value={a.followUpDate} readOnly={readOnly} disabled={readOnly} onChange={e => patchActivity(idx, { followUpDate: e.target.value })} style={{ ...mi, opacity: readOnly ? 1 : undefined }} />
-              </div>
-              <label style={{ display: 'flex', alignItems: 'center', gap: 8, fontFamily: FF, fontSize: 12.5, color: C.text, cursor: readOnly ? 'default' : 'pointer', paddingBottom: 8 }}>
-                <input
-                  type="checkbox"
-                  checked={a.done}
-                  disabled={readOnly}
-                  onChange={e => patchActivity(idx, { done: e.target.checked })}
-                  style={{ width: 16, height: 16, accentColor: C.green, cursor: readOnly ? 'default' : 'pointer' }}
-                />
-                Mark as done
-              </label>
+    <Modal title={modalTitle} onClose={onClose} width={960}>
+      <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 20, alignItems: 'start' }}>
+        {/* Left — contact details */}
+        <div>
+          <div style={{ marginBottom: 14 }}>
+            <label style={ml}>Name</label>
+            <input value={d.name} readOnly={readOnly} disabled={readOnly} onChange={e => set('name', e.target.value)} style={{ ...mi, opacity: readOnly ? 1 : undefined }} placeholder="Full name" autoFocus={editing && !openInView} />
+          </div>
+          <div style={{ marginBottom: 14 }}>
+            <label style={ml}>Company</label>
+            <div style={{ position: 'relative' }}>
+              <span style={{ position: 'absolute', left: 9, top: '50%', transform: 'translateY(-50%)', color: C.muted, pointerEvents: 'none' }}>
+                <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><rect x="2" y="7" width="20" height="14" rx="2"/><path d="M16 7V5a2 2 0 0 0-4 0v2"/></svg>
+              </span>
+              <select value={d.organizationId} disabled={readOnly} onChange={e => set('organizationId', e.target.value)} style={{ ...mi, paddingLeft: 28, opacity: readOnly ? 1 : undefined }}>
+                <option value="">— None —</option>
+                {companies.map(c => <option key={c.id} value={c.id}>{c.name}</option>)}
+              </select>
             </div>
           </div>
-        ))}
+          <div style={{ marginBottom: 14 }}>
+            <label style={ml}>Position</label>
+            <select value={d.position} disabled={readOnly} onChange={e => set('position', e.target.value)} style={{ ...mi, opacity: readOnly ? 1 : undefined }}>
+              <option value="">— Select position —</option>
+              {PERSON_POSITIONS.map(pos => <option key={pos} value={pos}>{pos}</option>)}
+            </select>
+          </div>
+          <label style={ml}>Phone</label>
+          <MultiField items={d.phones} types={PHONE_TYPES} addLabel="phone" placeholder="Phone number" isPhone readOnly={readOnly} onChange={v => set('phones', v)} />
+          <label style={ml}>Email</label>
+          <MultiField items={d.emails} types={EMAIL_TYPES} addLabel="email" placeholder="Email address" readOnly={readOnly} onChange={v => set('emails', v)} />
+        </div>
 
-        {!readOnly && activities.length < 20 && (
-          <button type="button" onClick={addActivityRow} style={addRowBtn}>+ Activity</button>
-        )}
+        {/* Right — activity timeline (always visible) */}
+        <div style={{ borderLeft: `1px solid ${C.border}`, paddingLeft: 20, minHeight: 280 }}>
+          <div style={{ fontFamily: FF, fontWeight: 700, fontSize: 11.5, letterSpacing: '.06em', textTransform: 'uppercase', color: C.text, marginBottom: 12 }}>
+            Activity Log
+          </div>
 
-        <div style={{ marginTop: 18, paddingTop: 14, borderTop: `1px solid ${C.border}` }}>
-          <label style={{ ...ml, marginBottom: 6 }}>Note Attachments (images / screenshots)</label>
+          <div style={{ maxHeight: readOnly ? 420 : 220, overflowY: 'auto', marginBottom: readOnly ? 0 : 12, paddingRight: 4 }}>
+            {(readOnly ? sortedActivities : historicalActivities).length === 0 && (
+              <p style={{ fontFamily: FF, fontSize: 12, color: C.muted, margin: 0 }}>No activities recorded.</p>
+            )}
+            {(readOnly ? sortedActivities : historicalActivities).map(a => <ActivityReadCard key={a.id} activity={a} />)}
+          </div>
+
           {!readOnly && (
             <>
-              <input
-                ref={attachInputRef}
-                type="file"
-                accept="image/*"
-                multiple
-                style={{ display: 'none' }}
-                onChange={e => { void addAttachments(e.target.files); e.target.value = ''; }}
-              />
-              <button type="button" onClick={() => attachInputRef.current?.click()} style={attachZoneBtn}>
-                + Click to attach pictures or screenshots…
-              </button>
-            </>
-          )}
-          {attachments.length === 0 && readOnly && (
-            <p style={{ fontFamily: FF, fontSize: 12, color: C.muted, margin: 0 }}>No attachments.</p>
-          )}
-          {attachments.length > 0 && (
-            <div style={{ marginTop: 10, display: 'flex', flexWrap: 'wrap', gap: 10 }}>
-              {attachments.map(att => {
-                const isImg = att.dataUrl.startsWith('data:image') || isImageName(att.name);
+              <div style={{ fontFamily: FF, fontWeight: 700, fontSize: 10.5, letterSpacing: '.06em', textTransform: 'uppercase', color: C.sub, marginBottom: 8 }}>
+                New activity
+              </div>
+              {draftActivities.map(a => {
+                const idx = activities.findIndex(x => x.id === a.id);
+                if (idx < 0) return null;
                 return (
-                  <div
-                    key={att.id}
-                    style={{
-                      position: 'relative', border: `1px solid ${C.greenBd}`, borderRadius: 4,
-                      background: C.greenBg, padding: 4, width: isImg ? 96 : 'auto', maxWidth: 220,
-                    }}
-                  >
-                    {isImg ? (
-                      <img src={att.dataUrl} alt={att.name} style={{ width: 88, height: 88, objectFit: 'cover', borderRadius: 2, display: 'block' }} />
-                    ) : (
-                      <span style={{ display: 'block', padding: '6px 10px', fontSize: 11.5, color: C.green, fontFamily: FF }}>{att.name}</span>
-                    )}
-                    {!readOnly && (
-                      <button
-                        type="button"
-                        onClick={() => removeAttachment(att.id)}
-                        title="Remove"
-                        style={{
-                          position: 'absolute', top: 2, right: 2, background: 'rgba(192,57,43,.9)', border: 'none',
-                          color: '#fff', borderRadius: 3, width: 18, height: 18, fontSize: 12, lineHeight: 1,
-                          cursor: 'pointer', fontWeight: 700,
-                        }}
-                      >
-                        ×
-                      </button>
-                    )}
+                <div
+                  key={a.id}
+                  style={{ marginBottom: 14, paddingBottom: 14, borderBottom: `1px solid ${C.border}` }}
+                >
+                  <div style={{ display: 'flex', justifyContent: 'flex-end', marginBottom: 6 }}>
+                    <button type="button" onClick={() => removeActivityRow(idx)} style={actDelBtn} title="Remove activity">×</button>
                   </div>
+                  <div style={row2}>
+                    <div>
+                      <label style={ml}>Date</label>
+                      <input type="date" value={a.date} onChange={e => patchActivity(idx, { date: e.target.value })} style={mi} />
+                    </div>
+                    <div>
+                      <label style={ml}>Type</label>
+                      <select value={a.type} onChange={e => patchActivity(idx, { type: e.target.value as CrmActivityType })} style={mi}>
+                        {ACTIVITY_TYPES.map(t => <option key={t} value={t}>{t}</option>)}
+                      </select>
+                    </div>
+                  </div>
+                  <div style={{ marginTop: 10 }}>
+                    <label style={ml}>Notes</label>
+                    <textarea
+                      value={a.notes}
+                      onChange={e => patchActivity(idx, { notes: e.target.value })}
+                      placeholder="What was discussed…"
+                      rows={3}
+                      style={{ ...mi, resize: 'vertical', minHeight: 64 }}
+                    />
+                  </div>
+                  <div style={{ ...row2, marginTop: 10, alignItems: 'end' }}>
+                    <div>
+                      <label style={ml}>Follow up date</label>
+                      <input type="date" value={a.followUpDate} onChange={e => patchActivity(idx, { followUpDate: e.target.value })} style={mi} />
+                    </div>
+                    <label style={{ display: 'flex', alignItems: 'center', gap: 8, fontFamily: FF, fontSize: 12.5, color: C.text, cursor: 'pointer', paddingBottom: 8 }}>
+                      <input
+                        type="checkbox"
+                        checked={a.done}
+                        onChange={e => patchActivity(idx, { done: e.target.checked })}
+                        style={{ width: 16, height: 16, accentColor: C.green, cursor: 'pointer' }}
+                      />
+                      Mark as done
+                    </label>
+                  </div>
+                </div>
                 );
               })}
-            </div>
+              {activities.length < 20 && (
+                <button type="button" onClick={addActivityRow} style={addRowBtn}>+ Activity</button>
+              )}
+            </>
           )}
+
+          <div style={{ marginTop: 16, paddingTop: 14, borderTop: `1px solid ${C.border}` }}>
+            <label style={{ ...ml, marginBottom: 6 }}>Note Attachments (images / screenshots)</label>
+            {!readOnly && (
+              <>
+                <input
+                  ref={attachInputRef}
+                  type="file"
+                  accept="image/*"
+                  multiple
+                  style={{ display: 'none' }}
+                  onChange={e => { void addAttachments(e.target.files); e.target.value = ''; }}
+                />
+                <button type="button" onClick={() => attachInputRef.current?.click()} style={attachZoneBtn}>
+                  + Click to attach pictures or screenshots…
+                </button>
+              </>
+            )}
+            {attachments.length === 0 && readOnly && (
+              <p style={{ fontFamily: FF, fontSize: 12, color: C.muted, margin: 0 }}>No attachments.</p>
+            )}
+            {attachments.length > 0 && (
+              <div style={{ marginTop: 10, display: 'flex', flexWrap: 'wrap', gap: 10 }}>
+                {attachments.map(att => {
+                  const isImg = att.dataUrl.startsWith('data:image') || isImageName(att.name);
+                  return (
+                    <div
+                      key={att.id}
+                      style={{
+                        position: 'relative', border: `1px solid ${C.greenBd}`, borderRadius: 4,
+                        background: C.greenBg, padding: 4, width: isImg ? 96 : 'auto', maxWidth: 220,
+                      }}
+                    >
+                      {isImg ? (
+                        <img src={att.dataUrl} alt={att.name} style={{ width: 88, height: 88, objectFit: 'cover', borderRadius: 2, display: 'block' }} />
+                      ) : (
+                        <span style={{ display: 'block', padding: '6px 10px', fontSize: 11.5, color: C.green, fontFamily: FF }}>{att.name}</span>
+                      )}
+                      {!readOnly && (
+                        <button
+                          type="button"
+                          onClick={() => removeAttachment(att.id)}
+                          title="Remove"
+                          style={{
+                            position: 'absolute', top: 2, right: 2, background: 'rgba(192,57,43,.9)', border: 'none',
+                            color: '#fff', borderRadius: 3, width: 18, height: 18, fontSize: 12, lineHeight: 1,
+                            cursor: 'pointer', fontWeight: 700,
+                          }}
+                        >
+                          ×
+                        </button>
+                      )}
+                    </div>
+                  );
+                })}
+              </div>
+            )}
+          </div>
         </div>
       </div>
 
@@ -853,9 +920,7 @@ const CompanyModal: React.FC<{
   const handleSave = (): void => {
     if (!d.name.trim()) return;
     onSave(d);
-    snapshotRef.current = d;
-    if (isNew) { onClose(); return; }
-    setEditing(false);
+    onClose();
   };
 
   const handleDelete = (): void => {
@@ -992,12 +1057,13 @@ const TdIndex: React.FC<{ children: React.ReactNode }> = ({ children }) => (
 );
 
 // ── CrmBoard ──────────────────────────────────────────────────────
-const initCrm = (): { persons: CrmPerson[]; companies: CrmCompany[] } => cloneStaticCrm();
-
 const CrmBoard: React.FC<CrmBoardProps> = ({ spService }) => {
   const [tab, setTab]             = React.useState<CrmTab>('persons');
-  const [persons, setPersons]     = React.useState<CrmPerson[]>(() => initCrm().persons);
-  const [companies, setCompanies] = React.useState<CrmCompany[]>(() => initCrm().companies);
+  const [persons, setPersons]     = React.useState<CrmPerson[]>(() => cloneStaticCrm().persons);
+  const [companies, setCompanies] = React.useState<CrmCompany[]>(() => cloneStaticCrm().companies);
+  const [crmReady, setCrmReady]   = React.useState(false);
+  const [syncState, setSyncState] = React.useState<'idle' | 'loading' | 'saving'>('loading');
+  const [spSyncNote, setSpSyncNote] = React.useState('');
   type PersonModalState = { person: CrmPerson; isNew: boolean; openInView: boolean };
   type CompanyModalState = { company: CrmCompany; isNew: boolean; openInView: boolean };
   const [personModal, setPersonModal]   = React.useState<PersonModalState | null>(null);
@@ -1007,10 +1073,126 @@ const CrmBoard: React.FC<CrmBoardProps> = ({ spService }) => {
   const [personSort, setPersonSort]     = React.useState<{ key: PersonSortKey; dir: SortDir } | null>(null);
   const [companySort, setCompanySort] = React.useState<{ key: CompanySortKey; dir: SortDir } | null>(null);
 
-  const savePerson    = (p: CrmPerson):  void => { setPersons(prev  => prev.some(x => x.id === p.id) ? prev.map(x => x.id === p.id ? p : x) : [...prev, p]); };
-  const deletePerson  = (id: string):    void => { setPersons(prev  => prev.filter(x => x.id !== id)); };
-  const saveCompany   = (c: CrmCompany): void => { setCompanies(prev => prev.some(x => x.id === c.id) ? prev.map(x => x.id === c.id ? c : x) : [...prev, c]); };
-  const deleteCompany = (id: string):    void => { setCompanies(prev => prev.filter(x => x.id !== id)); };
+  const personsRef = React.useRef(persons);
+  const companiesRef = React.useRef(companies);
+  personsRef.current = persons;
+  companiesRef.current = companies;
+  const lastSaveAtRef = React.useRef(0);
+  const lastLocalEditAtRef = React.useRef(0);
+  const deltaRevisionRef = React.useRef(0);
+  const saveTimerRef = React.useRef<ReturnType<typeof setTimeout> | null>(null);
+
+  const applyRemote = (data: { persons: CrmPerson[]; companies: CrmCompany[] }): void => {
+    setPersons(data.persons);
+    setCompanies(data.companies);
+    if (personModal && !personModal.isNew) {
+      const updated = data.persons.find(p => p.id === personModal.person.id);
+      if (updated) setPersonModal({ ...personModal, person: normalizePerson(updated) });
+    }
+    if (companyModal && !companyModal.isNew) {
+      const updated = data.companies.find(c => c.id === companyModal.company.id);
+      if (updated) setCompanyModal({ ...companyModal, company: updated });
+    }
+  };
+
+  const pullRemote = React.useCallback(async (skipIfRecentSave = true): Promise<void> => {
+    if (skipIfRecentSave && Date.now() - lastSaveAtRef.current < 4000) return;
+    if (Date.now() - lastLocalEditAtRef.current < 15000) return;
+    try {
+      const data = await loadCrmPersonsCompanies(spService);
+      const remoteStr = JSON.stringify(data);
+      const localStr = JSON.stringify({ persons: personsRef.current, companies: companiesRef.current });
+      if (remoteStr !== localStr) applyRemote(data);
+    } catch { /* ignore poll errors */ }
+  }, [spService]);
+
+  React.useEffect(() => {
+    let cancelled = false;
+    setCrmReady(false);
+    setSyncState('loading');
+    void (async () => {
+      try {
+        const [data, delta] = await Promise.all([
+          loadCrmPersonsCompanies(spService),
+          loadCrmDelta(spService),
+        ]);
+        if (cancelled) return;
+        if (delta?.revision) deltaRevisionRef.current = delta.revision;
+        applyRemote(data);
+        setSpSyncNote('');
+      } catch {
+        if (!cancelled) setSpSyncNote('Using local copy — could not load from SharePoint.');
+      } finally {
+        if (!cancelled) {
+          setSyncState('idle');
+          setCrmReady(true);
+        }
+      }
+    })();
+    return () => { cancelled = true; };
+  }, [spService]);
+
+  const flushSave = React.useCallback(async (): Promise<void> => {
+    setSyncState('saving');
+    const inputRevision = deltaRevisionRef.current;
+    const { ok, revision } = await saveCrmPersonsCompanies(
+      spService, personsRef.current, companiesRef.current, inputRevision,
+    );
+    if (inputRevision === deltaRevisionRef.current) {
+      deltaRevisionRef.current = revision;
+    }
+    lastSaveAtRef.current = Date.now();
+    setSyncState('idle');
+    setSpSyncNote(ok ? '' : 'Saved in this browser only — SharePoint sync failed. Check Contribute access on 3Edge_Settings.');
+  }, [spService]);
+
+  React.useEffect(() => {
+    if (!crmReady) return;
+    if (saveTimerRef.current) clearTimeout(saveTimerRef.current);
+    saveTimerRef.current = setTimeout(() => { void flushSave(); }, 2000);
+    return () => {
+      if (saveTimerRef.current) clearTimeout(saveTimerRef.current);
+    };
+  }, [persons, companies, crmReady, flushSave]);
+
+  React.useEffect(() => {
+    if (!crmReady) return;
+    const iv = setInterval(() => { void pullRemote(); }, 12000);
+    const onVis = (): void => {
+      if (document.visibilityState === 'visible') void pullRemote();
+    };
+    document.addEventListener('visibilitychange', onVis);
+    return () => {
+      clearInterval(iv);
+      document.removeEventListener('visibilitychange', onVis);
+    };
+  }, [crmReady, pullRemote]);
+
+  const touchLocalEdit = (): void => { lastLocalEditAtRef.current = Date.now(); };
+
+  const savePerson = (p: CrmPerson): void => {
+    touchLocalEdit();
+    const saved = normalizePerson(p);
+    setPersons(prev => prev.some(x => x.id === saved.id) ? prev.map(x => x.id === saved.id ? saved : x) : [...prev, saved]);
+    setPersonModal(prev => (prev && prev.person.id === saved.id
+      ? { ...prev, person: saved, openInView: !prev.isNew }
+      : prev));
+  };
+  const deletePerson = (id: string): void => {
+    touchLocalEdit();
+    setPersons(prev => prev.filter(x => x.id !== id));
+    setPersonModal(prev => (prev?.person.id === id ? null : prev));
+  };
+  const saveCompany = (c: CrmCompany): void => {
+    touchLocalEdit();
+    setCompanies(prev => prev.some(x => x.id === c.id) ? prev.map(x => x.id === c.id ? c : x) : [...prev, c]);
+    setCompanyModal(prev => (prev && prev.company.id === c.id ? { ...prev, company: c } : prev));
+  };
+  const deleteCompany = (id: string): void => {
+    touchLocalEdit();
+    setCompanies(prev => prev.filter(x => x.id !== id));
+    setCompanyModal(prev => (prev?.company.id === id ? null : prev));
+  };
   const companyName   = (id: string):    string => companies.find(c => c.id === id)?.name || '';
   const companyAddress = (id: string):   string => companies.find(c => c.id === id)?.address || '';
 
@@ -1019,6 +1201,10 @@ const CrmBoard: React.FC<CrmBoardProps> = ({ spService }) => {
     setCompanies(nextCo);
     setPersons(nextPe);
     setImportModal(false);
+    if (saveTimerRef.current) clearTimeout(saveTimerRef.current);
+    personsRef.current = nextPe;
+    companiesRef.current = nextCo;
+    void flushSave();
   };
 
   const q = search.toLowerCase();
@@ -1113,15 +1299,23 @@ const CrmBoard: React.FC<CrmBoardProps> = ({ spService }) => {
 
   return (
     <div style={{ background: C.bg, minHeight: 400, borderRadius: 8, padding: '0 0 24px 0', width: '100%', maxWidth: '100%', boxSizing: 'border-box' }}>
-{/* 
-      {(tab === 'persons' || tab === 'companies') && (
+
+      {syncState !== 'idle' && (tab === 'persons' || tab === 'companies') && (
         <div style={{
           padding: '8px 12px', marginBottom: 8, borderRadius: 4, fontFamily: FF, fontSize: 11, fontWeight: 600,
           color: C.sub, background: C.thBg, border: `1px solid ${C.border}`,
         }}>
-          Built-in CRM data — {CRM_STATIC_PERSONS.length} persons, {CRM_STATIC_COMPANIES.length} companies (same for all users; no SharePoint sync).
+          {syncState === 'loading' ? 'Loading CRM from SharePoint…' : 'Saving CRM…'}
         </div>
-      )} */}
+      )}
+      {spSyncNote && syncState === 'idle' && (tab === 'persons' || tab === 'companies') && (
+        <div style={{
+          padding: '8px 12px', marginBottom: 8, borderRadius: 4, fontFamily: FF, fontSize: 11, fontWeight: 600,
+          color: C.sub, background: 'rgba(90,110,136,.08)', border: `1px solid ${C.border}`,
+        }}>
+          {spSyncNote}
+        </div>
+      )}
 
       <>
       {/* ── Toolbar */}
@@ -1156,7 +1350,10 @@ const CrmBoard: React.FC<CrmBoardProps> = ({ spService }) => {
       </div>
 
       {/* ── Table */}
-      {(tab === 'persons' || tab === 'companies') && (
+      {(tab === 'persons' || tab === 'companies') && !crmReady && (
+        <div style={{ padding: 48, textAlign: 'center', fontFamily: FF, fontSize: 13, color: C.muted, background: C.surface, border: `1px solid ${C.border}`, borderRadius: '0 0 8px 8px' }}>Loading CRM…</div>
+      )}
+      {(tab === 'persons' || tab === 'companies') && crmReady && (
       <div style={{ background: C.surface, border: `1px solid ${C.border}`, borderTop: 'none', borderRadius: '0 0 8px 8px' }}>
 
         {/* Persons table */}
@@ -1268,7 +1465,7 @@ const CrmBoard: React.FC<CrmBoardProps> = ({ spService }) => {
                           {linked.length > 0 && (
                             <div style={{ display: 'flex', gap: 4, flexWrap: 'wrap' }}>
                               {linked.map(p => (
-                                <span key={p.id} style={{ fontSize: 10, fontFamily: FF, color: C.green, background: C.greenBg, border: `1px solid ${C.greenBd}`, borderRadius: 3, padding: '1px 6px', cursor: 'pointer' }} onClick={() => { setTab('persons'); setSearch(p.name); }} title={companyAddress(c.id) || 'View person'}>
+                                <span key={p.id} style={{ fontSize: 10, fontFamily: FF, color: C.green, background: C.greenBg, border: `1px solid ${C.greenBd}`, borderRadius: 3, padding: '1px 6px', cursor: 'pointer' }} onClick={() => setPersonModal({ person: normalizePerson(p), isNew: false, openInView: true })} title="View person">
                                   {p.name}
                                 </span>
                               ))}
@@ -1323,7 +1520,7 @@ const CrmBoard: React.FC<CrmBoardProps> = ({ spService }) => {
       {/* ── Modals */}
       {personModal && (
         <PersonModal
-          initial={personModal.person}
+          initial={persons.find(x => x.id === personModal.person.id) ?? personModal.person}
           companies={companies}
           isNew={personModal.isNew}
           openInView={personModal.openInView}
