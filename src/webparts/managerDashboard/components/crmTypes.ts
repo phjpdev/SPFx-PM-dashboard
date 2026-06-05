@@ -65,3 +65,27 @@ export interface CrmRfq {
   stage: CrmRfqStage;
   assignedTo: string;
 }
+
+export type CrmQuoteStatus = 'Draft' | 'Sent' | 'Accepted' | 'Declined';
+
+/** Quote created from an RFQ at Ready to Quote stage. */
+export interface CrmQuote {
+  id: string;
+  quoteNum: string;
+  rfqId: string;
+  rfqNum: string;
+  quotedDate: string;
+  dateReceived: string;
+  personId: string;
+  organizationId: string;
+  projectTitle: string;
+  projectAddress: string;
+  discipline: CrmRfqDiscipline;
+  projectValue: number;
+  approximateHours: number;
+  assignedTo: string;
+  source: string;
+  notes: string;
+  createQuoteXero: boolean;
+  status: CrmQuoteStatus;
+}

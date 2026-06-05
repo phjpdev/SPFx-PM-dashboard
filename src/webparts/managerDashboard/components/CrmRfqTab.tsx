@@ -1,7 +1,7 @@
 import * as React from 'react';
-import { loadRfqsFromSharePoint, saveRfqsToSharePoint } from './crmStorage';
+import { loadQuotesFromSharePoint, loadRfqsFromSharePoint, saveQuotesToSharePoint, saveRfqsToSharePoint } from './crmStorage';
 import type { SharePointService } from '../../../shared/services/SharePointService';
-import type { CrmPerson, CrmCompany, CrmRfq, CrmRfqDiscipline, CrmRfqStage } from './crmTypes';
+import type { CrmPerson, CrmCompany, CrmQuote, CrmRfq, CrmRfqDiscipline, CrmRfqStage } from './crmTypes';
 
 const FF = 'Montserrat,sans-serif';
 const LS_RFQS = '3edge-crm-rfqs';
@@ -66,6 +66,38 @@ const nextRfqNum = (rfqs: CrmRfq[]): string => {
   const next = nums.length ? Math.max(...nums) + 1 : 1;
   return `${prefix}${String(next).padStart(3, '0')}`;
 };
+
+const nextQuoteNum = (quotes: CrmQuote[]): string => {
+  const year = new Date().getFullYear().toString().slice(-2);
+  const prefix = `QT-${year}-`;
+  const nums = quotes
+    .filter(q => q.quoteNum.startsWith(prefix))
+    .map(q => parseInt(q.quoteNum.slice(prefix.length), 10))
+    .filter(n => !isNaN(n));
+  const next = nums.length ? Math.max(...nums) + 1 : 1;
+  return `${prefix}${String(next).padStart(3, '0')}`;
+};
+
+const rfqToQuote = (rfq: CrmRfq, quotes: CrmQuote[]): CrmQuote => ({
+  id: uid(),
+  quoteNum: nextQuoteNum(quotes),
+  rfqId: rfq.id,
+  rfqNum: rfq.rfqNum,
+  quotedDate: todayIso(),
+  dateReceived: rfq.dateReceived,
+  personId: rfq.personId,
+  organizationId: rfq.organizationId,
+  projectTitle: rfq.projectTitle,
+  projectAddress: rfq.projectAddress,
+  discipline: rfq.discipline,
+  projectValue: rfq.projectValue,
+  approximateHours: rfq.approximateHours,
+  assignedTo: rfq.assignedTo,
+  source: rfq.source,
+  notes: rfq.notes,
+  createQuoteXero: rfq.createQuoteXero,
+  status: 'Draft',
+});
 
 const emptyRfq = (rfqs: CrmRfq[]): CrmRfq => ({
   id: uid(),
@@ -306,7 +338,12 @@ const KpiCard: React.FC<{ label: string; value: string; sub: string; accent: str
 );
 
 // ── Main tab ──────────────────────────────────────────────────────
-const CrmRfqTab: React.FC<{ spService: SharePointService; persons: CrmPerson[]; companies: CrmCompany[] }> = ({ spService, persons, companies }) => {
+const CrmRfqTab: React.FC<{
+  spService: SharePointService;
+  persons: CrmPerson[];
+  companies: CrmCompany[];
+  onMovedToQuote?: (quotes: CrmQuote[]) => void;
+}> = ({ spService, persons, companies, onMovedToQuote }) => {
   const [rfqs, setRfqs] = React.useState<CrmRfq[]>([]);
   const [rfqReady, setRfqReady] = React.useState(false);
   const [search, setSearch] = React.useState('');
@@ -403,6 +440,36 @@ const CrmRfqTab: React.FC<{ spService: SharePointService; persons: CrmPerson[]; 
     if (confirm('Delete this RFQ?')) setRfqs(prev => prev.filter(x => x.id !== id));
   };
 
+  const moveToQuote = (rfq: CrmRfq): void => {
+    if (rfq.stage !== 'Ready to Quote') return;
+    if (!confirm(`Move ${rfq.rfqNum} to Quotes? It will be removed from the RFQ pipeline.`)) return;
+    void (async () => {
+      const existingQuotes = (await loadQuotesFromSharePoint(spService)).map(q => ({
+        ...q,
+        approximateHours: typeof q.approximateHours === 'number' ? q.approximateHours : 0,
+      }));
+      const quote = rfqToQuote(rfq, existingQuotes);
+      const nextQuotes = [...existingQuotes, quote];
+      const nextRfqs = rfqsRef.current.filter(x => x.id !== rfq.id);
+
+      try {
+        localStorage.setItem('3edge-crm-quotes', JSON.stringify(nextQuotes));
+        localStorage.setItem(LS_RFQS, JSON.stringify(nextRfqs));
+      } catch { /* ignore */ }
+
+      setRfqs(nextRfqs);
+      rfqsRef.current = nextRfqs;
+      if (saveTimerRef.current) clearTimeout(saveTimerRef.current);
+
+      onMovedToQuote?.(nextQuotes);
+
+      await Promise.all([
+        saveQuotesToSharePoint(spService, nextQuotes),
+        saveRfqsToSharePoint(spService, nextRfqs),
+      ]);
+    })();
+  };
+
   if (!rfqReady) {
     return <div style={{ padding: 24, fontFamily: FF, fontSize: 13, color: C.muted }}>Loading RFQs…</div>;
   }
@@ -493,12 +560,21 @@ const CrmRfqTab: React.FC<{ spService: SharePointService; persons: CrmPerson[]; 
                     >
                       Edit
                     </button>
-                    <button
-                      onClick={() => deleteRfq(r.id)}
-                      style={{ ...actionBtn, border: `1px solid ${C.red}`, background: 'transparent', color: C.red }}
-                    >
-                      Del
-                    </button>
+                    {r.stage === 'Ready to Quote' ? (
+                      <button
+                        onClick={() => moveToQuote(r)}
+                        style={{ ...actionBtn, border: 'none', background: C.green, color: '#fff' }}
+                      >
+                        Quote
+                      </button>
+                    ) : (
+                      <button
+                        onClick={() => deleteRfq(r.id)}
+                        style={{ ...actionBtn, border: `1px solid ${C.red}`, background: 'transparent', color: C.red }}
+                      >
+                        Del
+                      </button>
+                    )}
                   </div>
                 </td>
               </tr>
