@@ -57,6 +57,7 @@ export interface CrmRfq {
   discipline: CrmRfqDiscipline;
   quoteRequiredBy: string;
   projectValue: number;
+  approximateHours: number;
   createQuoteXero: boolean;
   relatedRfqId: string;
   notes: string;

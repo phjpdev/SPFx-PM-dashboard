@@ -8,8 +8,10 @@ const LIST_TASKS = 'WeeklyTasks';
 const LIST_TEAM = 'TeamMembers';
 const LIST_SETTINGS = '3Edge_Settings';
 const SITE_DATA_FOLDER = '3EdgeDashboardData';
-/** Max chars per 3Edge_Settings Value row when chunking (avoids HTTP 500 on huge blobs). */
-const SETTING_CHUNK_SIZE = 100000;
+/** Multiline Note field limit in SharePoint lists. */
+const SETTING_CHUNK_SIZE = 60000;
+/** Safe chunk size when Value is single-line text (~255 chars). */
+const SETTING_CHUNK_SIZE_SAFE = 200;
 
 export class SharePointService {
   private _siteUrl: string;
@@ -592,19 +594,35 @@ export class SharePointService {
     }
   }
 
-  /** Write chunks to 3Edge_Settings (works when users lack library Contribute). */
-  private async setSettingChunksLegacy(baseKey: string, value: string): Promise<void> {
-    if (value.length <= SETTING_CHUNK_SIZE) {
+  private async writeSettingChunks(baseKey: string, value: string, chunkSize: number): Promise<void> {
+    if (value.length <= chunkSize) {
       await this.setSettingStrict(baseKey, value);
       return;
     }
     const chunks: string[] = [];
-    for (let i = 0; i < value.length; i += SETTING_CHUNK_SIZE) {
-      chunks.push(value.slice(i, i + SETTING_CHUNK_SIZE));
+    for (let i = 0; i < value.length; i += chunkSize) {
+      chunks.push(value.slice(i, i + chunkSize));
     }
     await this.setSettingStrict(`${baseKey}__meta`, JSON.stringify({ chunks: chunks.length }));
     for (let i = 0; i < chunks.length; i++) {
       await this.setSettingStrict(`${baseKey}__${i}`, chunks[i]);
+    }
+  }
+
+  /** Write chunks to 3Edge_Settings (works when users lack library Contribute). */
+  private async setSettingChunksLegacy(baseKey: string, value: string): Promise<void> {
+    if (value.length <= SETTING_CHUNK_SIZE_SAFE) {
+      try {
+        await this.setSettingStrict(baseKey, value);
+        return;
+      } catch {
+        /* Value column may be single-line — fall through to safe chunking */
+      }
+    }
+    try {
+      await this.writeSettingChunks(baseKey, value, SETTING_CHUNK_SIZE);
+    } catch {
+      await this.writeSettingChunks(baseKey, value, SETTING_CHUNK_SIZE_SAFE);
     }
   }
 

@@ -78,6 +78,7 @@ const emptyRfq = (rfqs: CrmRfq[]): CrmRfq => ({
   discipline: 'Steel',
   quoteRequiredBy: '',
   projectValue: 0,
+  approximateHours: 0,
   createQuoteXero: false,
   relatedRfqId: '',
   notes: '',
@@ -86,14 +87,37 @@ const emptyRfq = (rfqs: CrmRfq[]): CrmRfq => ({
   assignedTo: 'MK',
 });
 
-const disciplineLabel = (d: CrmRfqDiscipline): string =>
-  d === 'Both' ? 'STEEL & CONCRETE' : d.toUpperCase();
+const disciplineBadgeStyle = (d: 'Steel' | 'Concrete'): React.CSSProperties => ({
+  display: 'inline-block',
+  padding: '1px 6px',
+  borderRadius: 3,
+  fontSize: 9,
+  fontWeight: 700,
+  letterSpacing: '.05em',
+  textTransform: 'uppercase',
+  fontFamily: FF,
+  background: d === 'Concrete' ? 'rgba(107,79,200,0.12)' : 'rgba(37,99,235,0.12)',
+  color: d === 'Concrete' ? '#6b4fc8' : '#2563eb',
+  border: `1px solid ${d === 'Concrete' ? '#6b4fc8' : '#2563eb'}`,
+});
 
-const disciplineStyle = (d: CrmRfqDiscipline): React.CSSProperties => {
-  if (d === 'Concrete') return { background: '#c8782a', color: '#fff' };
-  if (d === 'Both') return { background: '#6c3fbf', color: '#fff' };
-  return { background: '#1e6b38', color: '#fff' };
+const DisciplineBadges: React.FC<{ discipline: CrmRfqDiscipline }> = ({ discipline }) => {
+  if (discipline === 'Both') {
+    return (
+      <span style={{ display: 'flex', gap: 3, flexWrap: 'wrap' }}>
+        <span style={disciplineBadgeStyle('Steel')}>STEEL</span>
+        <span style={disciplineBadgeStyle('Concrete')}>CONCRETE</span>
+      </span>
+    );
+  }
+  const kind = discipline === 'Concrete' ? 'Concrete' : 'Steel';
+  return <span style={disciplineBadgeStyle(kind)}>{kind.toUpperCase()}</span>;
 };
+
+const normalizeRfq = (r: CrmRfq): CrmRfq => ({
+  ...r,
+  approximateHours: typeof r.approximateHours === 'number' ? r.approximateHours : 0,
+});
 
 const stageStyle = (s: CrmRfqStage): React.CSSProperties => {
   const map: Record<CrmRfqStage, { bg: string; color: string }> = {
@@ -213,6 +237,10 @@ const RfqModal: React.FC<{
               <input type="number" min={0} step={100} value={d.projectValue || ''} onChange={e => set('projectValue', Number(e.target.value) || 0)} style={mi} />
             </div>
             <div>
+              <label style={ml}>Approximate Hours</label>
+              <input type="number" min={0} step={1} value={d.approximateHours || ''} onChange={e => set('approximateHours', Number(e.target.value) || 0)} style={mi} placeholder="e.g. 120" />
+            </div>
+            <div>
               <label style={ml}>Assigned To</label>
               <select value={d.assignedTo} onChange={e => set('assignedTo', e.target.value)} style={mi}>
                 {OWNERS.map(o => <option key={o} value={o}>{o}</option>)}
@@ -293,7 +321,7 @@ const CrmRfqTab: React.FC<{ spService: SharePointService; persons: CrmPerson[]; 
     void (async () => {
       try {
         const data = await loadRfqsFromSharePoint(spService);
-        if (!cancelled) setRfqs(data);
+        if (!cancelled) setRfqs(data.map(normalizeRfq));
       } catch {
         if (!cancelled) setRfqs(loadRfqsLocal());
       } finally {
@@ -302,6 +330,21 @@ const CrmRfqTab: React.FC<{ spService: SharePointService; persons: CrmPerson[]; 
     })();
     return () => { cancelled = true; };
   }, [spService]);
+
+  React.useEffect(() => {
+    if (!rfqReady) return;
+    const iv = setInterval(() => {
+      void (async () => {
+        try {
+          const data = (await loadRfqsFromSharePoint(spService)).map(normalizeRfq);
+          const remoteStr = JSON.stringify(data);
+          const localStr = JSON.stringify(rfqsRef.current);
+          if (remoteStr !== localStr) setRfqs(data);
+        } catch { /* ignore */ }
+      })();
+    }, 12000);
+    return () => clearInterval(iv);
+  }, [rfqReady, spService]);
 
   React.useEffect(() => {
     if (!rfqReady) return;
@@ -345,8 +388,9 @@ const CrmRfqTab: React.FC<{ spService: SharePointService; persons: CrmPerson[]; 
   });
 
   const saveRfq = (r: CrmRfq): void => {
+    const saved = normalizeRfq(r);
     setRfqs(prev => {
-      const next = prev.some(x => x.id === r.id) ? prev.map(x => x.id === r.id ? r : x) : [...prev, r];
+      const next = prev.some(x => x.id === saved.id) ? prev.map(x => x.id === saved.id ? saved : x) : [...prev, saved];
       rfqsRef.current = next;
       if (saveTimerRef.current) clearTimeout(saveTimerRef.current);
       void saveRfqsToSharePoint(spService, next).catch(() => undefined);
@@ -404,7 +448,7 @@ const CrmRfqTab: React.FC<{ spService: SharePointService; persons: CrmPerson[]; 
         <table style={{ width: '100%', borderCollapse: 'collapse', minWidth: 960 }}>
           <thead>
             <tr>
-              {['RFQ #', 'Project', 'Company', 'Type', 'Source', 'Received', 'Quote By', 'Est Value', 'Stage', 'Owner', 'Actions'].map(h => (
+              {['RFQ #', 'Project', 'Company', 'Type', 'Source', 'Received', 'Quote By', 'Est Value', 'Hours', 'Stage', 'Owner', 'Actions'].map(h => (
                 <th key={h} style={{ padding: '9px 10px', textAlign: 'left', fontFamily: FF, fontWeight: 700, fontSize: 10, letterSpacing: '.06em', textTransform: 'uppercase', color: C.sub, background: C.thBg, borderBottom: `2px solid ${C.borderMd}`, whiteSpace: 'nowrap' }}>
                   {h}
                 </th>
@@ -414,7 +458,7 @@ const CrmRfqTab: React.FC<{ spService: SharePointService; persons: CrmPerson[]; 
           <tbody>
             {filtered.length === 0 ? (
               <tr>
-                <td colSpan={11} style={{ padding: 48, textAlign: 'center', fontFamily: FF, fontSize: 13, color: C.muted }}>
+                <td colSpan={12} style={{ padding: 48, textAlign: 'center', fontFamily: FF, fontSize: 13, color: C.muted }}>
                   {rfqs.length === 0 ? 'No RFQs yet — click + RFQ to add one.' : 'No results match your search.'}
                 </td>
               </tr>
@@ -428,7 +472,7 @@ const CrmRfqTab: React.FC<{ spService: SharePointService; persons: CrmPerson[]; 
                 <td style={{ padding: '10px', fontFamily: FF, fontSize: 12, fontWeight: 600, color: C.text, borderBottom: `1px solid ${C.border}` }}>{r.projectTitle || '—'}</td>
                 <td style={{ padding: '10px', fontFamily: FF, fontSize: 12, color: C.sub, borderBottom: `1px solid ${C.border}` }}>{companyName(r.organizationId)}</td>
                 <td style={{ padding: '10px', borderBottom: `1px solid ${C.border}` }}>
-                  <span style={{ ...badge, ...disciplineStyle(r.discipline) }}>{disciplineLabel(r.discipline)}</span>
+                  <DisciplineBadges discipline={r.discipline} />
                 </td>
                 <td style={{ padding: '10px', fontFamily: FF, fontSize: 12, color: C.sub, borderBottom: `1px solid ${C.border}` }}>{r.source || '—'}</td>
                 <td style={{ padding: '10px', fontFamily: FF, fontSize: 12, color: C.sub, borderBottom: `1px solid ${C.border}` }}>{fmtShortDate(r.dateReceived)}</td>
@@ -436,6 +480,7 @@ const CrmRfqTab: React.FC<{ spService: SharePointService; persons: CrmPerson[]; 
                   {fmtShortDate(r.quoteRequiredBy)}
                 </td>
                 <td style={{ padding: '10px', fontFamily: FF, fontSize: 12, fontWeight: 600, color: C.text, borderBottom: `1px solid ${C.border}` }}>{r.projectValue ? fmtMoney(r.projectValue) : '—'}</td>
+                <td style={{ padding: '10px', fontFamily: FF, fontSize: 12, fontWeight: 600, color: C.sub, borderBottom: `1px solid ${C.border}` }}>{r.approximateHours ? String(r.approximateHours) : '—'}</td>
                 <td style={{ padding: '10px', borderBottom: `1px solid ${C.border}` }}>
                   <span style={{ ...badge, ...stageStyle(r.stage) }}>{r.stage.toUpperCase()}</span>
                 </td>
