@@ -58,6 +58,11 @@ export interface CrmRfq {
   quoteRequiredBy: string;
   projectValue: number;
   approximateHours: number;
+  engineerDrawingReceived: boolean;
+  engineerDrawingDate: string;
+  architectDrawingReceived: boolean;
+  architectDrawingDate: string;
+  rfiAllowed: boolean;
   createQuoteXero: boolean;
   relatedRfqId: string;
   notes: string;
