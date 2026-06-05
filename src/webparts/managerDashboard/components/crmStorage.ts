@@ -1,5 +1,5 @@
 import type { SharePointService } from '../../../shared/services/SharePointService';
-import type { CrmPerson, CrmCompany, CrmRfq } from './crmTypes';
+import type { CrmPerson, CrmCompany, CrmRfq, CrmQuote } from './crmTypes';
 import { cloneStaticCrm } from './crmStaticData';
 
 /** Site-wide CRM delta index (small JSON — one row per changed person/company). */
@@ -7,11 +7,13 @@ export const CRM_SP_DELTA_META = 'crm_delta_meta';
 /** Legacy monolithic delta — read-only fallback. */
 export const CRM_SP_DELTA = 'crm_delta';
 export const CRM_SP_RFQS = 'crm_rfqs';
+export const CRM_SP_QUOTES = 'crm_quotes';
 
 const LS_DELTA = '3edge-crm-delta';
 const LS_PERSONS = '3edge-crm-persons';
 const LS_COMPANIES = '3edge-crm-companies';
 const LS_RFQS = '3edge-crm-rfqs';
+const LS_QUOTES = '3edge-crm-quotes';
 
 export interface CrmDelta {
   revision: number;
@@ -253,12 +255,24 @@ export async function saveCrmPersonsCompanies(
   }
 }
 
+/** Union remote + local; local wins on same id (handles stale empty SharePoint reads). */
+function mergeListById<T extends { id: string }>(remote: T[], local: T[]): T[] {
+  const map = new Map<string, T>();
+  remote.forEach(x => map.set(x.id, x));
+  local.forEach(x => map.set(x.id, x));
+  return Array.from(map.values());
+}
+
 export async function loadRfqsFromSharePoint(sp: SharePointService): Promise<CrmRfq[]> {
+  const local = loadLS<CrmRfq[]>(LS_RFQS, []);
   try {
     const json = await sp.getSettingChunks(CRM_SP_RFQS);
-    if (json) return JSON.parse(json) as CrmRfq[];
-  } catch { /* ignore */ }
-  return loadLS<CrmRfq[]>(LS_RFQS, []);
+    if (!json) return local;
+    const remote = JSON.parse(json) as CrmRfq[];
+    return mergeListById(remote, local);
+  } catch {
+    return local;
+  }
 }
 
 export async function saveRfqsToSharePoint(sp: SharePointService, rfqs: CrmRfq[]): Promise<void> {
@@ -267,5 +281,26 @@ export async function saveRfqsToSharePoint(sp: SharePointService, rfqs: CrmRfq[]
   } catch { /* ignore */ }
   try {
     await sp.setSettingChunks(CRM_SP_RFQS, JSON.stringify(rfqs));
+  } catch { /* ignore */ }
+}
+
+export async function loadQuotesFromSharePoint(sp: SharePointService): Promise<CrmQuote[]> {
+  const local = loadLS<CrmQuote[]>(LS_QUOTES, []);
+  try {
+    const json = await sp.getSettingChunks(CRM_SP_QUOTES);
+    if (!json) return local;
+    const remote = JSON.parse(json) as CrmQuote[];
+    return mergeListById(remote, local);
+  } catch {
+    return local;
+  }
+}
+
+export async function saveQuotesToSharePoint(sp: SharePointService, quotes: CrmQuote[]): Promise<void> {
+  try {
+    localStorage.setItem(LS_QUOTES, JSON.stringify(quotes));
+  } catch { /* ignore */ }
+  try {
+    await sp.setSettingChunks(CRM_SP_QUOTES, JSON.stringify(quotes));
   } catch { /* ignore */ }
 }

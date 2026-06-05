@@ -3,8 +3,9 @@ import { runCrmImport } from './crmImport';
 import { loadCrmDelta, loadCrmPersonsCompanies, saveCrmPersonsCompanies } from './crmStorage';
 import { cloneStaticCrm } from './crmStaticData';
 import CrmRfqTab from './CrmRfqTab';
+import CrmQuotesTab from './CrmQuotesTab';
 import type { SharePointService } from '../../../shared/services/SharePointService';
-import type { CrmPhone, CrmEmail, CrmPerson, CrmCompany, CrmActivity, CrmActivityType, CrmAttachment } from './crmTypes';
+import type { CrmPhone, CrmEmail, CrmPerson, CrmCompany, CrmActivity, CrmActivityType, CrmAttachment, CrmQuote } from './crmTypes';
 
 export interface CrmBoardProps {
   spService: SharePointService;
@@ -1043,6 +1044,8 @@ const TdIndex: React.FC<{ children: React.ReactNode }> = ({ children }) => (
 // ── CrmBoard ──────────────────────────────────────────────────────
 const CrmBoard: React.FC<CrmBoardProps> = ({ spService }) => {
   const [tab, setTab]             = React.useState<CrmTab>('persons');
+  const [quotesSeed, setQuotesSeed] = React.useState<CrmQuote[] | null>(null);
+  const clearQuotesSeed = React.useCallback((): void => setQuotesSeed(null), []);
   const [persons, setPersons]     = React.useState<CrmPerson[]>(() => cloneStaticCrm().persons);
   const [companies, setCompanies] = React.useState<CrmCompany[]>(() => cloneStaticCrm().companies);
   const [crmReady, setCrmReady]   = React.useState(false);
@@ -1491,13 +1494,24 @@ const CrmBoard: React.FC<CrmBoardProps> = ({ spService }) => {
 
       {tab === 'rfq' && (
         <div style={{ background: C.surface, border: `1px solid ${C.border}`, borderTop: 'none', borderRadius: '0 0 8px 8px', padding: '0 16px 16px 16px', overflowX: 'hidden', maxWidth: '100%', boxSizing: 'border-box' }}>
-          <CrmRfqTab spService={spService} persons={persons} companies={companies} />
+          <CrmRfqTab
+            spService={spService}
+            persons={persons}
+            companies={companies}
+            onMovedToQuote={(quotes) => { setQuotesSeed(quotes); setTab('quotes'); }}
+          />
         </div>
       )}
 
       {tab === 'quotes' && (
-        <div style={{ background: C.surface, border: `1px solid ${C.border}`, borderTop: 'none', borderRadius: '0 0 8px 8px', padding: 48, textAlign: 'center', fontFamily: FF, fontSize: 13, color: C.muted }}>
-          Quotes — coming soon.
+        <div style={{ background: C.surface, border: `1px solid ${C.border}`, borderTop: 'none', borderRadius: '0 0 8px 8px', padding: '0 16px 16px 16px', overflowX: 'hidden', maxWidth: '100%', boxSizing: 'border-box' }}>
+          <CrmQuotesTab
+            spService={spService}
+            persons={persons}
+            companies={companies}
+            seedQuotes={quotesSeed}
+            onSeedApplied={clearQuotesSeed}
+          />
         </div>
       )}
 
