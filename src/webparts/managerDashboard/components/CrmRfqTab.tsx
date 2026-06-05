@@ -111,6 +111,11 @@ const emptyRfq = (rfqs: CrmRfq[]): CrmRfq => ({
   quoteRequiredBy: '',
   projectValue: 0,
   approximateHours: 0,
+  engineerDrawingReceived: false,
+  engineerDrawingDate: '',
+  architectDrawingReceived: false,
+  architectDrawingDate: '',
+  rfiAllowed: false,
   createQuoteXero: false,
   relatedRfqId: '',
   notes: '',
@@ -149,7 +154,39 @@ const DisciplineBadges: React.FC<{ discipline: CrmRfqDiscipline }> = ({ discipli
 const normalizeRfq = (r: CrmRfq): CrmRfq => ({
   ...r,
   approximateHours: typeof r.approximateHours === 'number' ? r.approximateHours : 0,
+  engineerDrawingReceived: !!r.engineerDrawingReceived,
+  engineerDrawingDate: r.engineerDrawingDate || '',
+  architectDrawingReceived: !!r.architectDrawingReceived,
+  architectDrawingDate: r.architectDrawingDate || '',
+  rfiAllowed: !!r.rfiAllowed,
 });
+
+const DrawingReceivedField: React.FC<{
+  label: string;
+  checked: boolean;
+  date: string;
+  onCheck: (v: boolean) => void;
+  onDate: (v: string) => void;
+}> = ({ label, checked, date, onCheck, onDate }) => (
+  <div>
+    <label style={{ display: 'flex', alignItems: 'center', gap: 8, fontFamily: FF, fontSize: 12, color: C.text, cursor: 'pointer', marginBottom: checked ? 6 : 0 }}>
+      <input
+        type="checkbox"
+        checked={checked}
+        onChange={e => {
+          const v = e.target.checked;
+          onCheck(v);
+          if (!v) onDate('');
+        }}
+        style={{ width: 16, height: 16, accentColor: C.green, flexShrink: 0 }}
+      />
+      <span style={{ ...ml, marginBottom: 0, textTransform: 'none', letterSpacing: 0, fontSize: 12 }}>{label}</span>
+    </label>
+    {checked && (
+      <input type="date" value={date} onChange={e => onDate(e.target.value)} style={mi} />
+    )}
+  </div>
+);
 
 const stageStyle = (s: CrmRfqStage): React.CSSProperties => {
   const map: Record<CrmRfqStage, { bg: string; color: string }> = {
@@ -215,7 +252,7 @@ const RfqModal: React.FC<{
 
   return (
     <div style={{ position: 'fixed', inset: 0, background: 'rgba(0,0,0,.45)', zIndex: 1000, display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
-      <div style={{ background: C.surface, borderRadius: 8, width: 640, maxHeight: '92vh', overflowY: 'auto', boxShadow: '0 12px 40px rgba(0,0,0,.18)', border: `1px solid ${C.border}` }}>
+      <div style={{ background: C.surface, borderRadius: 8, width: 680, maxHeight: '92vh', overflowY: 'auto', boxShadow: '0 12px 40px rgba(0,0,0,.18)', border: `1px solid ${C.border}` }}>
         <div style={{ padding: '14px 20px', borderBottom: `1px solid ${C.border}`, display: 'flex', justifyContent: 'space-between', alignItems: 'center', background: C.thBg }}>
           <span style={{ fontFamily: FF, fontWeight: 700, fontSize: 14, color: C.text }}>{isNew ? 'New RFQ' : `Edit ${d.rfqNum}`}</span>
           <button onClick={onClose} style={{ background: 'none', border: 'none', color: C.muted, cursor: 'pointer', fontSize: 20 }}>×</button>
@@ -264,19 +301,39 @@ const RfqModal: React.FC<{
               <label style={ml}>RFQ Required By</label>
               <input type="date" value={d.quoteRequiredBy} onChange={e => set('quoteRequiredBy', e.target.value)} style={mi} />
             </div>
+            <DrawingReceivedField
+              label="Engineer drawing received"
+              checked={d.engineerDrawingReceived}
+              date={d.engineerDrawingDate}
+              onCheck={v => set('engineerDrawingReceived', v)}
+              onDate={v => set('engineerDrawingDate', v)}
+            />
+            <DrawingReceivedField
+              label="Architect drawing received"
+              checked={d.architectDrawingReceived}
+              date={d.architectDrawingDate}
+              onCheck={v => set('architectDrawingReceived', v)}
+              onDate={v => set('architectDrawingDate', v)}
+            />
             <div>
               <label style={ml}>Project Value ($)</label>
               <input type="number" min={0} step={100} value={d.projectValue || ''} onChange={e => set('projectValue', Number(e.target.value) || 0)} style={mi} />
-            </div>
-            <div>
-              <label style={ml}>Approximate Hours</label>
-              <input type="number" min={0} step={1} value={d.approximateHours || ''} onChange={e => set('approximateHours', Number(e.target.value) || 0)} style={mi} placeholder="e.g. 120" />
             </div>
             <div>
               <label style={ml}>Assigned To</label>
               <select value={d.assignedTo} onChange={e => set('assignedTo', e.target.value)} style={mi}>
                 {OWNERS.map(o => <option key={o} value={o}>{o}</option>)}
               </select>
+            </div>
+            <div style={{ display: 'flex', alignItems: 'flex-end', paddingBottom: 4 }}>
+              <label style={{ display: 'flex', alignItems: 'center', gap: 8, fontFamily: FF, fontSize: 12, color: C.text, cursor: 'pointer' }}>
+                <input type="checkbox" checked={d.rfiAllowed} onChange={e => set('rfiAllowed', e.target.checked)} style={{ width: 16, height: 16, accentColor: C.green }} />
+                RFI allowed
+              </label>
+            </div>
+            <div>
+              <label style={ml}>Est Hours</label>
+              <input type="number" min={0} step={1} value={d.approximateHours || ''} onChange={e => set('approximateHours', Number(e.target.value) || 0)} style={mi} placeholder="e.g. 120" />
             </div>
             <div>
               <label style={ml}>Stage</label>
