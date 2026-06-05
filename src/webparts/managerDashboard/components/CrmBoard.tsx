@@ -540,7 +540,6 @@ const PersonModal: React.FC<{
   onClose: () => void;
 }> = ({ initial, companies, isNew = false, openInView = false, onSave, onDelete, onClose }) => {
   const [editing, setEditing] = React.useState(isNew || !openInView);
-  const [draftActivityIds, setDraftActivityIds] = React.useState<string[]>([]);
   const [d, setD] = React.useState<CrmPerson>(() => normalizePerson(initial));
   const snapshotRef = React.useRef<CrmPerson>(normalizePerson(initial));
   const set = <K extends keyof CrmPerson>(k: K, v: CrmPerson[K]): void => setD(p => ({ ...p, [k]: v }));
@@ -552,7 +551,6 @@ const PersonModal: React.FC<{
 
   React.useEffect(() => {
     setEditing(isNew || !openInView);
-    setDraftActivityIds([]);
   }, [initial.id, isNew, openInView]);
 
   React.useEffect(() => {
@@ -598,13 +596,9 @@ const PersonModal: React.FC<{
   };
 
   const addActivityRow = (): void => {
-    const a = emptyActivity();
-    setDraftActivityIds(prev => [...prev, a.id]);
-    set('activities', [...activities, a]);
+    set('activities', [...activities, emptyActivity()]);
   };
   const removeActivityRow = (idx: number): void => {
-    const removed = activities[idx];
-    if (removed) setDraftActivityIds(prev => prev.filter(id => id !== removed.id));
     set('activities', activities.filter((_, i) => i !== idx));
   };
 
@@ -633,9 +627,6 @@ const PersonModal: React.FC<{
     padding: '8px 12px', fontSize: 12, color: C.muted, width: '100%', textAlign: 'left',
   };
 
-  const draftIdSet = React.useMemo(() => new Set(draftActivityIds), [draftActivityIds]);
-  const historicalActivities = sortActivitiesNewest(activities.filter(a => !draftIdSet.has(a.id)));
-  const draftActivities = activities.filter(a => draftIdSet.has(a.id));
   const sortedActivities = sortActivitiesNewest(activities);
 
   return (
@@ -678,22 +669,15 @@ const PersonModal: React.FC<{
             Activity Log
           </div>
 
-          <div style={{ maxHeight: readOnly ? 420 : 220, overflowY: 'auto', marginBottom: readOnly ? 0 : 12, paddingRight: 4 }}>
-            {(readOnly ? sortedActivities : historicalActivities).length === 0 && (
+          <div style={{ maxHeight: readOnly ? 420 : 360, overflowY: 'auto', marginBottom: readOnly ? 0 : 12, paddingRight: 4 }}>
+            {sortedActivities.length === 0 && (
               <p style={{ fontFamily: FF, fontSize: 12, color: C.muted, margin: 0 }}>No activities recorded.</p>
             )}
-            {(readOnly ? sortedActivities : historicalActivities).map(a => <ActivityReadCard key={a.id} activity={a} />)}
-          </div>
-
-          {!readOnly && (
-            <>
-              <div style={{ fontFamily: FF, fontWeight: 700, fontSize: 10.5, letterSpacing: '.06em', textTransform: 'uppercase', color: C.sub, marginBottom: 8 }}>
-                New activity
-              </div>
-              {draftActivities.map(a => {
-                const idx = activities.findIndex(x => x.id === a.id);
-                if (idx < 0) return null;
-                return (
+            {readOnly && sortedActivities.map(a => <ActivityReadCard key={a.id} activity={a} />)}
+            {!readOnly && sortedActivities.map(a => {
+              const idx = activities.findIndex(x => x.id === a.id);
+              if (idx < 0) return null;
+              return (
                 <div
                   key={a.id}
                   style={{ marginBottom: 14, paddingBottom: 14, borderBottom: `1px solid ${C.border}` }}
@@ -739,12 +723,12 @@ const PersonModal: React.FC<{
                     </label>
                   </div>
                 </div>
-                );
-              })}
-              {activities.length < 20 && (
-                <button type="button" onClick={addActivityRow} style={addRowBtn}>+ Activity</button>
-              )}
-            </>
+              );
+            })}
+          </div>
+
+          {!readOnly && activities.length < 20 && (
+            <button type="button" onClick={addActivityRow} style={addRowBtn}>+ Activity</button>
           )}
 
           <div style={{ marginTop: 16, paddingTop: 14, borderTop: `1px solid ${C.border}` }}>
