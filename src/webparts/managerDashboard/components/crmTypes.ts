@@ -46,9 +46,8 @@ export type CrmRfqStage =
   | 'Won'
   | 'Declined';
 
-export interface CrmRfq {
-  id: string;
-  rfqNum: string;
+/** Shared enquiry fields carried RFQ → Quote → Project. */
+export interface CrmEnquiryCore {
   dateReceived: string;
   personId: string;
   organizationId: string;
@@ -65,34 +64,41 @@ export interface CrmRfq {
   architectDrawingDate: string;
   revisionVersionArch: string;
   rfiAllowed: number;
-  createQuoteXero: boolean;
-  relatedRfqId: string;
-  notes: string;
-  source: string;
-  stage: CrmRfqStage;
   assignedTo: string;
+  source: string;
+  notes: string;
 }
 
-export type CrmQuoteStatus = 'Draft' | 'Sent' | 'Accepted' | 'Declined';
+export interface CrmRfq extends CrmEnquiryCore {
+  id: string;
+  rfqNum: string;
+  createQuoteXero: boolean;
+  relatedRfqId: string;
+  stage: CrmRfqStage;
+}
+
+export type CrmQuoteStatus = 'Draft' | 'Sent' | 'Lost';
 
 /** Quote created from an RFQ at Ready to Quote stage. */
-export interface CrmQuote {
+export interface CrmQuote extends CrmEnquiryCore {
   id: string;
   quoteNum: string;
   rfqId: string;
   rfqNum: string;
   quotedDate: string;
-  dateReceived: string;
-  personId: string;
-  organizationId: string;
-  projectTitle: string;
-  projectAddress: string;
-  discipline: CrmRfqDiscipline;
-  projectValue: number;
-  approximateHours: number;
-  assignedTo: string;
-  source: string;
-  notes: string;
   createQuoteXero: boolean;
+  relatedRfqId: string;
   status: CrmQuoteStatus;
+}
+
+/** Won quote promoted to an active 3EDGE project. */
+export interface CrmProject extends CrmEnquiryCore {
+  id: string;
+  projNum: string;
+  spProjectId?: number;
+  quoteId: string;
+  quoteNum: string;
+  rfqId: string;
+  rfqNum: string;
+  wonDate: string;
 }

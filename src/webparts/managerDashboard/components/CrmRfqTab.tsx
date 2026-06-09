@@ -1,5 +1,9 @@
 import * as React from 'react';
-import { loadQuotesFromSharePoint, loadRfqsFromSharePoint, saveQuotesToSharePoint, saveRfqsToSharePoint } from './crmStorage';
+import { loadProjectsFromSharePoint, loadQuotesFromSharePoint, loadRfqsFromSharePoint, saveQuotesToSharePoint, saveRfqsToSharePoint } from './crmStorage';
+import { copyRfqAttachmentsToQuote, getRfqAttachments, setRfqAttachments } from './crmAttachmentStore';
+import { DocumentUploadSection } from './crmDocumentUpload';
+import { nextRfqNum } from './crmProjectHelpers';
+import type { CrmAttachment } from './crmTypes';
 import type { SharePointService } from '../../../shared/services/SharePointService';
 import type { CrmPerson, CrmCompany, CrmQuote, CrmRfq, CrmRfqDiscipline, CrmRfqStage } from './crmTypes';
 
@@ -56,27 +60,6 @@ const isOverdue = (r: CrmRfq): boolean => {
   return r.quoteRequiredBy < todayIso();
 };
 
-/** Include RFQs already moved to Quotes so numbering never reuses (e.g. RFQ-26-002 after 001 quoted). */
-const nextRfqNum = (rfqs: CrmRfq[], quotes: CrmQuote[] = []): string => {
-  const year = new Date().getFullYear().toString().slice(-2);
-  const prefix = `RFQ-${year}-`;
-  const nums: number[] = [];
-  rfqs.forEach(r => {
-    if (r.rfqNum.startsWith(prefix)) {
-      const n = parseInt(r.rfqNum.slice(prefix.length), 10);
-      if (!isNaN(n)) nums.push(n);
-    }
-  });
-  quotes.forEach(q => {
-    if (q.rfqNum.startsWith(prefix)) {
-      const n = parseInt(q.rfqNum.slice(prefix.length), 10);
-      if (!isNaN(n)) nums.push(n);
-    }
-  });
-  const next = nums.length ? Math.max(...nums) + 1 : 1;
-  return `${prefix}${String(next).padStart(3, '0')}`;
-};
-
 const rfqToQuote = (rfq: CrmRfq, quoteNum: string): CrmQuote => ({
   id: uid(),
   quoteNum,
@@ -89,18 +72,27 @@ const rfqToQuote = (rfq: CrmRfq, quoteNum: string): CrmQuote => ({
   projectTitle: rfq.projectTitle,
   projectAddress: rfq.projectAddress,
   discipline: rfq.discipline,
+  quoteRequiredBy: rfq.quoteRequiredBy,
   projectValue: rfq.projectValue,
   approximateHours: rfq.approximateHours,
+  engineerDrawingReceived: rfq.engineerDrawingReceived,
+  engineerDrawingDate: rfq.engineerDrawingDate,
+  revisionVersionEng: rfq.revisionVersionEng,
+  architectDrawingReceived: rfq.architectDrawingReceived,
+  architectDrawingDate: rfq.architectDrawingDate,
+  revisionVersionArch: rfq.revisionVersionArch,
+  rfiAllowed: rfq.rfiAllowed,
   assignedTo: rfq.assignedTo,
   source: rfq.source,
   notes: rfq.notes,
-  createQuoteXero: rfq.createQuoteXero,
+  createQuoteXero: false,
+  relatedRfqId: rfq.relatedRfqId,
   status: 'Draft',
 });
 
-const emptyRfq = (rfqs: CrmRfq[], quotes: CrmQuote[] = []): CrmRfq => ({
+const emptyRfq = (rfqs: CrmRfq[], quotes: CrmQuote[] = [], projects: { rfqNum: string }[] = []): CrmRfq => ({
   id: uid(),
-  rfqNum: nextRfqNum(rfqs, quotes),
+  rfqNum: nextRfqNum(rfqs, quotes, projects),
   dateReceived: todayIso(),
   personId: '',
   organizationId: '',
@@ -219,7 +211,7 @@ const MoveToQuoteModal: React.FC<{
   onConfirm: (quoteNum: string) => void;
   onClose: () => void;
 }> = ({ rfq, onConfirm, onClose }) => {
-  const [quoteNum, setQuoteNum] = React.useState('');
+  const [quoteNum, setQuoteNum] = React.useState('QU-');
   return (
     <div style={{ position: 'fixed', inset: 0, background: 'rgba(0,0,0,.45)', zIndex: 1001, display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
       <div style={{ background: C.surface, borderRadius: 8, width: 440, boxShadow: '0 12px 40px rgba(0,0,0,.18)', border: `1px solid ${C.border}` }}>
@@ -236,16 +228,21 @@ const MoveToQuoteModal: React.FC<{
             value={quoteNum}
             onChange={e => setQuoteNum(e.target.value)}
             style={mi}
-            placeholder="e.g. QU-0490"
+            placeholder="QU-0490"
             autoFocus
           />
+          <p style={{ fontFamily: FF, fontSize: 11, color: C.muted, margin: '6px 0 0 0' }}>
+            Enter the Xero quote number (e.g. QU-0490). You can also fill this in later on the Quotes tab.
+          </p>
         </div>
         <div style={{ display: 'flex', gap: 10, justifyContent: 'flex-end', padding: '14px 22px', borderTop: `1px solid ${C.border}` }}>
           <button onClick={onClose} style={{ padding: '8px 20px', borderRadius: 4, border: `1px solid ${C.borderMd}`, background: 'transparent', color: C.sub, fontFamily: FF, fontSize: 12, cursor: 'pointer' }}>Cancel</button>
           <button
-            onClick={() => { if (quoteNum.trim()) onConfirm(quoteNum.trim()); }}
-            disabled={!quoteNum.trim()}
-            style={{ padding: '8px 20px', borderRadius: 4, border: 'none', background: quoteNum.trim() ? C.green : C.borderMd, color: '#fff', fontFamily: FF, fontWeight: 700, fontSize: 12, cursor: quoteNum.trim() ? 'pointer' : 'default' }}
+            onClick={() => {
+              const num = quoteNum.trim();
+              onConfirm(num === 'QU-' ? '' : num);
+            }}
+            style={{ padding: '8px 20px', borderRadius: 4, border: 'none', background: C.green, color: '#fff', fontFamily: FF, fontWeight: 700, fontSize: 12, cursor: 'pointer' }}
           >
             Move to Quotes
           </button>
@@ -265,6 +262,7 @@ const RfqModal: React.FC<{
   onClose: () => void;
 }> = ({ initial, rfqs, persons, companies, onSave, onClose }) => {
   const [d, setD] = React.useState<CrmRfq>(initial);
+  const [attachments, setAttachments] = React.useState<CrmAttachment[]>(() => getRfqAttachments(initial.id));
   const set = <K extends keyof CrmRfq>(k: K, v: CrmRfq[K]): void => setD(p => ({ ...p, [k]: v }));
   const grid2: React.CSSProperties = { display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '14px 18px' };
   const isNew = !rfqs.some(r => r.id === initial.id);
@@ -412,11 +410,17 @@ const RfqModal: React.FC<{
               style={{ ...mi, resize: 'vertical', minHeight: 80 }}
             />
           </div>
+          <DocumentUploadSection attachments={attachments} onChange={setAttachments} />
         </div>
         <div style={{ display: 'flex', gap: 10, justifyContent: 'flex-end', padding: '14px 22px', borderTop: `1px solid ${C.border}` }}>
           <button onClick={onClose} style={{ padding: '8px 20px', borderRadius: 4, border: `1px solid ${C.borderMd}`, background: 'transparent', color: C.sub, fontFamily: FF, fontSize: 12, cursor: 'pointer' }}>Cancel</button>
           <button
-            onClick={() => { if (d.projectTitle.trim()) onSave(d); }}
+            onClick={() => {
+              if (d.projectTitle.trim()) {
+                setRfqAttachments(d.id, attachments);
+                onSave(d);
+              }
+            }}
             style={{ padding: '8px 20px', borderRadius: 4, border: 'none', background: C.green, color: '#fff', fontFamily: FF, fontWeight: 700, fontSize: 12, cursor: 'pointer' }}
           >
             Save
@@ -448,6 +452,7 @@ const CrmRfqTab: React.FC<{
 }> = ({ spService, persons, companies, onMovedToQuote }) => {
   const [rfqs, setRfqs] = React.useState<CrmRfq[]>([]);
   const [quotes, setQuotes] = React.useState<CrmQuote[]>([]);
+  const [projects, setProjects] = React.useState<{ rfqNum: string }[]>([]);
   const [rfqReady, setRfqReady] = React.useState(false);
   const [search, setSearch] = React.useState('');
   const [stageFilter, setStageFilter] = React.useState('all');
@@ -463,9 +468,10 @@ const CrmRfqTab: React.FC<{
     let cancelled = false;
     void (async () => {
       try {
-        const [rfqData, quoteData] = await Promise.all([
+        const [rfqData, quoteData, projData] = await Promise.all([
           loadRfqsFromSharePoint(spService),
           loadQuotesFromSharePoint(spService),
+          loadProjectsFromSharePoint(spService),
         ]);
         if (!cancelled) {
           setRfqs(rfqData.map(normalizeRfq));
@@ -473,6 +479,7 @@ const CrmRfqTab: React.FC<{
             ...q,
             approximateHours: typeof q.approximateHours === 'number' ? q.approximateHours : 0,
           })));
+          setProjects(projData);
         }
       } catch {
         if (!cancelled) setRfqs(loadRfqsLocal());
@@ -562,6 +569,7 @@ const CrmRfqTab: React.FC<{
         approximateHours: typeof q.approximateHours === 'number' ? q.approximateHours : 0,
       }));
       const quote = rfqToQuote(rfq, xeroQuoteNum);
+      copyRfqAttachmentsToQuote(rfq.id, quote.id);
       const nextQuotes = [...existingQuotes, quote];
       const nextRfqs = rfqsRef.current.filter(x => x.id !== rfq.id);
 
@@ -619,7 +627,7 @@ const CrmRfqTab: React.FC<{
           {STAGES.map(s => <option key={s} value={s}>{s}</option>)}
         </select>
         <button
-          onClick={() => setModal(emptyRfq(rfqs, quotes))}
+          onClick={() => setModal(emptyRfq(rfqs, quotes, projects))}
           style={{ marginLeft: 'auto', padding: '8px 18px', borderRadius: 4, border: 'none', background: C.green, color: '#fff', fontFamily: FF, fontWeight: 700, fontSize: 12, cursor: 'pointer', whiteSpace: 'nowrap', flexShrink: 0 }}
         >
           + RFQ
