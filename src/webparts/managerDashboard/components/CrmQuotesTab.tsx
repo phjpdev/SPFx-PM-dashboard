@@ -107,12 +107,21 @@ const QuoteModal: React.FC<{
     <div style={{ position: 'fixed', inset: 0, background: 'rgba(0,0,0,.45)', zIndex: 1000, display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
       <div style={{ background: C.surface, borderRadius: 8, width: 520, maxHeight: '92vh', overflowY: 'auto', boxShadow: '0 12px 40px rgba(0,0,0,.18)', border: `1px solid ${C.border}` }}>
         <div style={{ padding: '14px 20px', borderBottom: `1px solid ${C.border}`, display: 'flex', justifyContent: 'space-between', alignItems: 'center', background: C.thBg }}>
-          <span style={{ fontFamily: FF, fontWeight: 700, fontSize: 14, color: C.text }}>{d.quoteNum}</span>
+          <span style={{ fontFamily: FF, fontWeight: 700, fontSize: 14, color: C.text }}>Edit Quote</span>
           <button onClick={onClose} style={{ background: 'none', border: 'none', color: C.muted, cursor: 'pointer', fontSize: 20 }}>×</button>
         </div>
         <div style={{ padding: '20px 22px' }}>
           <div style={{ marginBottom: 12, fontFamily: FF, fontSize: 12, color: C.sub }}>
             From RFQ <strong style={{ color: '#0d9488' }}>{d.rfqNum}</strong> · {d.projectTitle || 'Untitled'}
+          </div>
+          <div style={{ marginBottom: 14 }}>
+            <label style={ml}>Quote # (Xero)</label>
+            <input
+              value={d.quoteNum}
+              onChange={e => set('quoteNum', e.target.value)}
+              style={mi}
+              placeholder="e.g. QU-0490"
+            />
           </div>
           <div style={{ marginBottom: 14 }}>
             <label style={ml}>Status</label>
@@ -128,12 +137,6 @@ const QuoteModal: React.FC<{
             <label style={ml}>Approximate Hours</label>
             <input type="number" min={0} step={1} value={d.approximateHours || ''} onChange={e => set('approximateHours', Number(e.target.value) || 0)} style={mi} />
           </div>
-          <div style={{ marginBottom: 14 }}>
-            <label style={{ display: 'flex', alignItems: 'center', gap: 8, fontFamily: FF, fontSize: 12, color: C.text, cursor: 'pointer' }}>
-              <input type="checkbox" checked={d.createQuoteXero} onChange={e => set('createQuoteXero', e.target.checked)} style={{ width: 16, height: 16, accentColor: C.green }} />
-              Create quote in Xero
-            </label>
-          </div>
           <div>
             <label style={ml}>Notes</label>
             <textarea value={d.notes} onChange={e => set('notes', e.target.value)} rows={4} style={{ ...mi, resize: 'vertical', minHeight: 80 }} />
@@ -141,7 +144,12 @@ const QuoteModal: React.FC<{
         </div>
         <div style={{ display: 'flex', gap: 10, justifyContent: 'flex-end', padding: '14px 22px', borderTop: `1px solid ${C.border}` }}>
           <button onClick={onClose} style={{ padding: '8px 20px', borderRadius: 4, border: `1px solid ${C.borderMd}`, background: 'transparent', color: C.sub, fontFamily: FF, fontSize: 12, cursor: 'pointer' }}>Cancel</button>
-          <button onClick={() => onSave(d)} style={{ padding: '8px 20px', borderRadius: 4, border: 'none', background: C.green, color: '#fff', fontFamily: FF, fontWeight: 700, fontSize: 12, cursor: 'pointer' }}>Save</button>
+          <button
+            onClick={() => { if (d.quoteNum.trim()) onSave({ ...d, quoteNum: d.quoteNum.trim() }); }}
+            style={{ padding: '8px 20px', borderRadius: 4, border: 'none', background: d.quoteNum.trim() ? C.green : C.borderMd, color: '#fff', fontFamily: FF, fontWeight: 700, fontSize: 12, cursor: d.quoteNum.trim() ? 'pointer' : 'default' }}
+          >
+            Save
+          </button>
         </div>
       </div>
     </div>

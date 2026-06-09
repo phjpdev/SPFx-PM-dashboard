@@ -56,31 +56,30 @@ const isOverdue = (r: CrmRfq): boolean => {
   return r.quoteRequiredBy < todayIso();
 };
 
-const nextRfqNum = (rfqs: CrmRfq[]): string => {
+/** Include RFQs already moved to Quotes so numbering never reuses (e.g. RFQ-26-002 after 001 quoted). */
+const nextRfqNum = (rfqs: CrmRfq[], quotes: CrmQuote[] = []): string => {
   const year = new Date().getFullYear().toString().slice(-2);
   const prefix = `RFQ-${year}-`;
-  const nums = rfqs
-    .filter(r => r.rfqNum.startsWith(prefix))
-    .map(r => parseInt(r.rfqNum.slice(prefix.length), 10))
-    .filter(n => !isNaN(n));
+  const nums: number[] = [];
+  rfqs.forEach(r => {
+    if (r.rfqNum.startsWith(prefix)) {
+      const n = parseInt(r.rfqNum.slice(prefix.length), 10);
+      if (!isNaN(n)) nums.push(n);
+    }
+  });
+  quotes.forEach(q => {
+    if (q.rfqNum.startsWith(prefix)) {
+      const n = parseInt(q.rfqNum.slice(prefix.length), 10);
+      if (!isNaN(n)) nums.push(n);
+    }
+  });
   const next = nums.length ? Math.max(...nums) + 1 : 1;
   return `${prefix}${String(next).padStart(3, '0')}`;
 };
 
-const nextQuoteNum = (quotes: CrmQuote[]): string => {
-  const year = new Date().getFullYear().toString().slice(-2);
-  const prefix = `QT-${year}-`;
-  const nums = quotes
-    .filter(q => q.quoteNum.startsWith(prefix))
-    .map(q => parseInt(q.quoteNum.slice(prefix.length), 10))
-    .filter(n => !isNaN(n));
-  const next = nums.length ? Math.max(...nums) + 1 : 1;
-  return `${prefix}${String(next).padStart(3, '0')}`;
-};
-
-const rfqToQuote = (rfq: CrmRfq, quotes: CrmQuote[]): CrmQuote => ({
+const rfqToQuote = (rfq: CrmRfq, quoteNum: string): CrmQuote => ({
   id: uid(),
-  quoteNum: nextQuoteNum(quotes),
+  quoteNum,
   rfqId: rfq.id,
   rfqNum: rfq.rfqNum,
   quotedDate: todayIso(),
@@ -99,9 +98,9 @@ const rfqToQuote = (rfq: CrmRfq, quotes: CrmQuote[]): CrmQuote => ({
   status: 'Draft',
 });
 
-const emptyRfq = (rfqs: CrmRfq[]): CrmRfq => ({
+const emptyRfq = (rfqs: CrmRfq[], quotes: CrmQuote[] = []): CrmRfq => ({
   id: uid(),
-  rfqNum: nextRfqNum(rfqs),
+  rfqNum: nextRfqNum(rfqs, quotes),
   dateReceived: todayIso(),
   personId: '',
   organizationId: '',
@@ -113,9 +112,11 @@ const emptyRfq = (rfqs: CrmRfq[]): CrmRfq => ({
   approximateHours: 0,
   engineerDrawingReceived: false,
   engineerDrawingDate: '',
+  revisionVersionEng: '',
   architectDrawingReceived: false,
   architectDrawingDate: '',
-  rfiAllowed: false,
+  revisionVersionArch: '',
+  rfiAllowed: 0,
   createQuoteXero: false,
   relatedRfqId: '',
   notes: '',
@@ -156,9 +157,11 @@ const normalizeRfq = (r: CrmRfq): CrmRfq => ({
   approximateHours: typeof r.approximateHours === 'number' ? r.approximateHours : 0,
   engineerDrawingReceived: !!r.engineerDrawingReceived,
   engineerDrawingDate: r.engineerDrawingDate || '',
+  revisionVersionEng: r.revisionVersionEng || '',
   architectDrawingReceived: !!r.architectDrawingReceived,
   architectDrawingDate: r.architectDrawingDate || '',
-  rfiAllowed: !!r.rfiAllowed,
+  revisionVersionArch: r.revisionVersionArch || '',
+  rfiAllowed: typeof r.rfiAllowed === 'number' ? r.rfiAllowed : (r.rfiAllowed ? 1 : 0),
 });
 
 const DrawingReceivedField: React.FC<{
@@ -208,6 +211,48 @@ const badge: React.CSSProperties = {
 const actionBtn: React.CSSProperties = {
   padding: '4px 10px', borderRadius: 3, fontFamily: FF, fontWeight: 700,
   fontSize: 10.5, cursor: 'pointer', width: '100%', boxSizing: 'border-box', textAlign: 'center',
+};
+
+// ── Move to Quote (Xero quote #) ──────────────────────────────────
+const MoveToQuoteModal: React.FC<{
+  rfq: CrmRfq;
+  onConfirm: (quoteNum: string) => void;
+  onClose: () => void;
+}> = ({ rfq, onConfirm, onClose }) => {
+  const [quoteNum, setQuoteNum] = React.useState('');
+  return (
+    <div style={{ position: 'fixed', inset: 0, background: 'rgba(0,0,0,.45)', zIndex: 1001, display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
+      <div style={{ background: C.surface, borderRadius: 8, width: 440, boxShadow: '0 12px 40px rgba(0,0,0,.18)', border: `1px solid ${C.border}` }}>
+        <div style={{ padding: '14px 20px', borderBottom: `1px solid ${C.border}`, background: C.thBg }}>
+          <span style={{ fontFamily: FF, fontWeight: 700, fontSize: 14, color: C.text }}>Move to Quotes</span>
+        </div>
+        <div style={{ padding: '20px 22px' }}>
+          <p style={{ fontFamily: FF, fontSize: 12, color: C.sub, margin: '0 0 14px 0', lineHeight: 1.5 }}>
+            Move <strong style={{ color: '#0d9488' }}>{rfq.rfqNum}</strong>
+            {rfq.projectTitle ? ` — ${rfq.projectTitle}` : ''} to Quotes. It will be removed from the RFQ pipeline.
+          </p>
+          <label style={ml}>Quote # (from Xero)</label>
+          <input
+            value={quoteNum}
+            onChange={e => setQuoteNum(e.target.value)}
+            style={mi}
+            placeholder="e.g. QU-0490"
+            autoFocus
+          />
+        </div>
+        <div style={{ display: 'flex', gap: 10, justifyContent: 'flex-end', padding: '14px 22px', borderTop: `1px solid ${C.border}` }}>
+          <button onClick={onClose} style={{ padding: '8px 20px', borderRadius: 4, border: `1px solid ${C.borderMd}`, background: 'transparent', color: C.sub, fontFamily: FF, fontSize: 12, cursor: 'pointer' }}>Cancel</button>
+          <button
+            onClick={() => { if (quoteNum.trim()) onConfirm(quoteNum.trim()); }}
+            disabled={!quoteNum.trim()}
+            style={{ padding: '8px 20px', borderRadius: 4, border: 'none', background: quoteNum.trim() ? C.green : C.borderMd, color: '#fff', fontFamily: FF, fontWeight: 700, fontSize: 12, cursor: quoteNum.trim() ? 'pointer' : 'default' }}
+          >
+            Move to Quotes
+          </button>
+        </div>
+      </div>
+    </div>
+  );
 };
 
 // ── Modal ─────────────────────────────────────────────────────────
@@ -316,6 +361,14 @@ const RfqModal: React.FC<{
               onDate={v => set('architectDrawingDate', v)}
             />
             <div>
+              <label style={ml}>Revision version Eng</label>
+              <input value={d.revisionVersionEng} onChange={e => set('revisionVersionEng', e.target.value)} style={mi} placeholder="e.g. Rev A" />
+            </div>
+            <div>
+              <label style={ml}>Revision version Arch</label>
+              <input value={d.revisionVersionArch} onChange={e => set('revisionVersionArch', e.target.value)} style={mi} placeholder="e.g. Rev A" />
+            </div>
+            <div>
               <label style={ml}>Project Value ($)</label>
               <input type="number" min={0} step={100} value={d.projectValue || ''} onChange={e => set('projectValue', Number(e.target.value) || 0)} style={mi} />
             </div>
@@ -325,11 +378,9 @@ const RfqModal: React.FC<{
                 {OWNERS.map(o => <option key={o} value={o}>{o}</option>)}
               </select>
             </div>
-            <div style={{ display: 'flex', alignItems: 'flex-end', paddingBottom: 4 }}>
-              <label style={{ display: 'flex', alignItems: 'center', gap: 8, fontFamily: FF, fontSize: 12, color: C.text, cursor: 'pointer' }}>
-                <input type="checkbox" checked={d.rfiAllowed} onChange={e => set('rfiAllowed', e.target.checked)} style={{ width: 16, height: 16, accentColor: C.green }} />
-                RFI allowed
-              </label>
+            <div>
+              <label style={ml}>RFI allowed</label>
+              <input type="number" min={0} step={1} value={d.rfiAllowed || ''} onChange={e => set('rfiAllowed', Number(e.target.value) || 0)} style={mi} placeholder="e.g. 3" />
             </div>
             <div>
               <label style={ml}>Est Hours</label>
@@ -340,12 +391,6 @@ const RfqModal: React.FC<{
               <select value={d.stage} onChange={e => set('stage', e.target.value as CrmRfqStage)} style={mi}>
                 {STAGES.map(s => <option key={s} value={s}>{s}</option>)}
               </select>
-            </div>
-            <div style={{ display: 'flex', alignItems: 'flex-end', paddingBottom: 4 }}>
-              <label style={{ display: 'flex', alignItems: 'center', gap: 8, fontFamily: FF, fontSize: 12, color: C.text, cursor: 'pointer' }}>
-                <input type="checkbox" checked={d.createQuoteXero} onChange={e => set('createQuoteXero', e.target.checked)} style={{ width: 16, height: 16, accentColor: C.green }} />
-                Create quote in Xero
-              </label>
             </div>
           </div>
           <div style={{ marginTop: 14 }}>
@@ -402,20 +447,33 @@ const CrmRfqTab: React.FC<{
   onMovedToQuote?: (quotes: CrmQuote[]) => void;
 }> = ({ spService, persons, companies, onMovedToQuote }) => {
   const [rfqs, setRfqs] = React.useState<CrmRfq[]>([]);
+  const [quotes, setQuotes] = React.useState<CrmQuote[]>([]);
   const [rfqReady, setRfqReady] = React.useState(false);
   const [search, setSearch] = React.useState('');
   const [stageFilter, setStageFilter] = React.useState('all');
   const [modal, setModal] = React.useState<CrmRfq | null>(null);
+  const [moveQuoteRfq, setMoveQuoteRfq] = React.useState<CrmRfq | null>(null);
   const rfqsRef = React.useRef(rfqs);
+  const quotesRef = React.useRef(quotes);
   rfqsRef.current = rfqs;
+  quotesRef.current = quotes;
   const saveTimerRef = React.useRef<ReturnType<typeof setTimeout> | null>(null);
 
   React.useEffect(() => {
     let cancelled = false;
     void (async () => {
       try {
-        const data = await loadRfqsFromSharePoint(spService);
-        if (!cancelled) setRfqs(data.map(normalizeRfq));
+        const [rfqData, quoteData] = await Promise.all([
+          loadRfqsFromSharePoint(spService),
+          loadQuotesFromSharePoint(spService),
+        ]);
+        if (!cancelled) {
+          setRfqs(rfqData.map(normalizeRfq));
+          setQuotes(quoteData.map(q => ({
+            ...q,
+            approximateHours: typeof q.approximateHours === 'number' ? q.approximateHours : 0,
+          })));
+        }
       } catch {
         if (!cancelled) setRfqs(loadRfqsLocal());
       } finally {
@@ -497,15 +555,13 @@ const CrmRfqTab: React.FC<{
     if (confirm('Delete this RFQ?')) setRfqs(prev => prev.filter(x => x.id !== id));
   };
 
-  const moveToQuote = (rfq: CrmRfq): void => {
-    if (rfq.stage !== 'Ready to Quote') return;
-    if (!confirm(`Move ${rfq.rfqNum} to Quotes? It will be removed from the RFQ pipeline.`)) return;
+  const confirmMoveToQuote = (rfq: CrmRfq, xeroQuoteNum: string): void => {
     void (async () => {
       const existingQuotes = (await loadQuotesFromSharePoint(spService)).map(q => ({
         ...q,
         approximateHours: typeof q.approximateHours === 'number' ? q.approximateHours : 0,
       }));
-      const quote = rfqToQuote(rfq, existingQuotes);
+      const quote = rfqToQuote(rfq, xeroQuoteNum);
       const nextQuotes = [...existingQuotes, quote];
       const nextRfqs = rfqsRef.current.filter(x => x.id !== rfq.id);
 
@@ -515,8 +571,11 @@ const CrmRfqTab: React.FC<{
       } catch { /* ignore */ }
 
       setRfqs(nextRfqs);
+      setQuotes(nextQuotes);
       rfqsRef.current = nextRfqs;
+      quotesRef.current = nextQuotes;
       if (saveTimerRef.current) clearTimeout(saveTimerRef.current);
+      setMoveQuoteRfq(null);
 
       onMovedToQuote?.(nextQuotes);
 
@@ -560,7 +619,7 @@ const CrmRfqTab: React.FC<{
           {STAGES.map(s => <option key={s} value={s}>{s}</option>)}
         </select>
         <button
-          onClick={() => setModal(emptyRfq(rfqs))}
+          onClick={() => setModal(emptyRfq(rfqs, quotes))}
           style={{ marginLeft: 'auto', padding: '8px 18px', borderRadius: 4, border: 'none', background: C.green, color: '#fff', fontFamily: FF, fontWeight: 700, fontSize: 12, cursor: 'pointer', whiteSpace: 'nowrap', flexShrink: 0 }}
         >
           + RFQ
@@ -619,7 +678,7 @@ const CrmRfqTab: React.FC<{
                     </button>
                     {r.stage === 'Ready to Quote' ? (
                       <button
-                        onClick={() => moveToQuote(r)}
+                        onClick={() => setMoveQuoteRfq(r)}
                         style={{ ...actionBtn, border: 'none', background: C.green, color: '#fff' }}
                       >
                         Quote
@@ -651,6 +710,13 @@ const CrmRfqTab: React.FC<{
           companies={companies}
           onSave={saveRfq}
           onClose={() => setModal(null)}
+        />
+      )}
+      {moveQuoteRfq && (
+        <MoveToQuoteModal
+          rfq={moveQuoteRfq}
+          onConfirm={num => confirmMoveToQuote(moveQuoteRfq, num)}
+          onClose={() => setMoveQuoteRfq(null)}
         />
       )}
     </>
