@@ -1314,7 +1314,7 @@ const CrmBoard: React.FC<CrmBoardProps> = ({ spService }) => {
           <button style={tabBtn(tab === 'companies')} onClick={() => { setTab('companies'); setSearch(''); setPersonSort(null); }}>Companies</button>
           <button style={tabBtn(tab === 'rfq')}       onClick={() => setTab('rfq')}>RFQ</button>
           <button style={tabBtn(tab === 'quotes')}    onClick={() => setTab('quotes')}>Quotes</button>
-          <button style={tabBtn(tab === 'projects')} onClick={() => setTab('projects')}>Projects</button>
+          <button style={tabBtn(tab === 'projects')} onClick={() => setTab('projects')}>WIP</button>
         </div>
         {(tab === 'persons' || tab === 'companies') && (
           <div style={{ display: 'flex', gap: 10, alignItems: 'center', paddingBottom: 4 }}>
