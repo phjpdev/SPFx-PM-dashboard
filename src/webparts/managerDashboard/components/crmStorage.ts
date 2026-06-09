@@ -1,5 +1,5 @@
 import type { SharePointService } from '../../../shared/services/SharePointService';
-import type { CrmPerson, CrmCompany, CrmRfq, CrmQuote } from './crmTypes';
+import type { CrmPerson, CrmCompany, CrmRfq, CrmQuote, CrmProject } from './crmTypes';
 import { cloneStaticCrm } from './crmStaticData';
 
 /** Site-wide CRM delta index (small JSON — one row per changed person/company). */
@@ -8,12 +8,22 @@ export const CRM_SP_DELTA_META = 'crm_delta_meta';
 export const CRM_SP_DELTA = 'crm_delta';
 export const CRM_SP_RFQS = 'crm_rfqs';
 export const CRM_SP_QUOTES = 'crm_quotes';
+export const CRM_SP_PROJECTS = 'crm_projects';
+export const CRM_SP_QUOTE_BUDGET = 'crm_quote_budget';
+
+export interface CrmQuoteBudget {
+  year: number;
+  yearTarget: number;
+  monthTarget: number;
+}
 
 const LS_DELTA = '3edge-crm-delta';
 const LS_PERSONS = '3edge-crm-persons';
 const LS_COMPANIES = '3edge-crm-companies';
 const LS_RFQS = '3edge-crm-rfqs';
 const LS_QUOTES = '3edge-crm-quotes';
+const LS_PROJECTS = '3edge-crm-projects';
+const LS_QUOTE_BUDGET = '3edge-crm-quote-budget';
 
 export interface CrmDelta {
   revision: number;
@@ -302,5 +312,53 @@ export async function saveQuotesToSharePoint(sp: SharePointService, quotes: CrmQ
   } catch { /* ignore */ }
   try {
     await sp.setSettingChunks(CRM_SP_QUOTES, JSON.stringify(quotes));
+  } catch { /* ignore */ }
+}
+
+export async function loadProjectsFromSharePoint(sp: SharePointService): Promise<CrmProject[]> {
+  const local = loadLS<CrmProject[]>(LS_PROJECTS, []);
+  try {
+    const json = await sp.getSettingChunks(CRM_SP_PROJECTS);
+    if (!json) return local;
+    const remote = JSON.parse(json) as CrmProject[];
+    return mergeListById(remote, local);
+  } catch {
+    return local;
+  }
+}
+
+export async function saveProjectsToSharePoint(sp: SharePointService, projects: CrmProject[]): Promise<void> {
+  try {
+    localStorage.setItem(LS_PROJECTS, JSON.stringify(projects));
+  } catch { /* ignore */ }
+  try {
+    await sp.setSettingChunks(CRM_SP_PROJECTS, JSON.stringify(projects));
+  } catch { /* ignore */ }
+}
+
+const defaultQuoteBudget = (): CrmQuoteBudget => ({
+  year: new Date().getFullYear(),
+  yearTarget: 0,
+  monthTarget: 0,
+});
+
+export async function loadQuoteBudget(sp: SharePointService): Promise<CrmQuoteBudget> {
+  const local = loadLS<CrmQuoteBudget | null>(LS_QUOTE_BUDGET, null);
+  try {
+    const json = await sp.getSettingChunks(CRM_SP_QUOTE_BUDGET);
+    if (!json) return local ?? defaultQuoteBudget();
+    const remote = JSON.parse(json) as CrmQuoteBudget;
+    return remote.year ? remote : (local ?? defaultQuoteBudget());
+  } catch {
+    return local ?? defaultQuoteBudget();
+  }
+}
+
+export async function saveQuoteBudget(sp: SharePointService, budget: CrmQuoteBudget): Promise<void> {
+  try {
+    localStorage.setItem(LS_QUOTE_BUDGET, JSON.stringify(budget));
+  } catch { /* ignore */ }
+  try {
+    await sp.setSettingChunks(CRM_SP_QUOTE_BUDGET, JSON.stringify(budget));
   } catch { /* ignore */ }
 }

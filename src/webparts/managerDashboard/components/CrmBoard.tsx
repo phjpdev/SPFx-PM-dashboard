@@ -4,8 +4,9 @@ import { loadCrmDelta, loadCrmPersonsCompanies, saveCrmPersonsCompanies } from '
 import { cloneStaticCrm } from './crmStaticData';
 import CrmRfqTab from './CrmRfqTab';
 import CrmQuotesTab from './CrmQuotesTab';
+import CrmProjectsTab from './CrmProjectsTab';
 import type { SharePointService } from '../../../shared/services/SharePointService';
-import type { CrmPhone, CrmEmail, CrmPerson, CrmCompany, CrmActivity, CrmActivityType, CrmAttachment, CrmQuote } from './crmTypes';
+import type { CrmPhone, CrmEmail, CrmPerson, CrmCompany, CrmActivity, CrmActivityType, CrmAttachment, CrmQuote, CrmProject } from './crmTypes';
 
 export interface CrmBoardProps {
   spService: SharePointService;
@@ -13,7 +14,7 @@ export interface CrmBoardProps {
 
 export type { CrmPerson, CrmCompany, CrmActivity } from './crmTypes';
 
-type CrmTab = 'persons' | 'companies' | 'rfq' | 'quotes';
+type CrmTab = 'persons' | 'companies' | 'rfq' | 'quotes' | 'projects';
 
 // ── Constants ─────────────────────────────────────────────────────
 const PHONE_TYPES  = ['Work', 'Home', 'Mobile', 'Other'];
@@ -1045,7 +1046,9 @@ const TdIndex: React.FC<{ children: React.ReactNode }> = ({ children }) => (
 const CrmBoard: React.FC<CrmBoardProps> = ({ spService }) => {
   const [tab, setTab]             = React.useState<CrmTab>('persons');
   const [quotesSeed, setQuotesSeed] = React.useState<CrmQuote[] | null>(null);
+  const [projectsSeed, setProjectsSeed] = React.useState<CrmProject[] | null>(null);
   const clearQuotesSeed = React.useCallback((): void => setQuotesSeed(null), []);
+  const clearProjectsSeed = React.useCallback((): void => setProjectsSeed(null), []);
   const [persons, setPersons]     = React.useState<CrmPerson[]>(() => cloneStaticCrm().persons);
   const [companies, setCompanies] = React.useState<CrmCompany[]>(() => cloneStaticCrm().companies);
   const [crmReady, setCrmReady]   = React.useState(false);
@@ -1312,6 +1315,7 @@ const CrmBoard: React.FC<CrmBoardProps> = ({ spService }) => {
           <button style={tabBtn(tab === 'companies')} onClick={() => { setTab('companies'); setSearch(''); setPersonSort(null); }}>Companies</button>
           <button style={tabBtn(tab === 'rfq')}       onClick={() => setTab('rfq')}>RFQ</button>
           <button style={tabBtn(tab === 'quotes')}    onClick={() => setTab('quotes')}>Quotes</button>
+          <button style={tabBtn(tab === 'projects')} onClick={() => setTab('projects')}>Projects</button>
         </div>
         {(tab === 'persons' || tab === 'companies') && (
           <div style={{ display: 'flex', gap: 10, alignItems: 'center', paddingBottom: 4 }}>
@@ -1511,6 +1515,23 @@ const CrmBoard: React.FC<CrmBoardProps> = ({ spService }) => {
             companies={companies}
             seedQuotes={quotesSeed}
             onSeedApplied={clearQuotesSeed}
+            onQuoteWon={(projects, quotes) => {
+              setProjectsSeed(projects);
+              setQuotesSeed(quotes);
+              setTab('projects');
+            }}
+          />
+        </div>
+      )}
+
+      {tab === 'projects' && (
+        <div style={{ background: C.surface, border: `1px solid ${C.border}`, borderTop: 'none', borderRadius: '0 0 8px 8px', padding: '0 16px 16px 16px', overflowX: 'hidden', maxWidth: '100%', boxSizing: 'border-box' }}>
+          <CrmProjectsTab
+            spService={spService}
+            persons={persons}
+            companies={companies}
+            seedProjects={projectsSeed}
+            onSeedApplied={clearProjectsSeed}
           />
         </div>
       )}
