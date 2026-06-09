@@ -44,6 +44,25 @@ const fmtShortDate = (iso: string): string => {
 const fmtMoney = (n: number): string =>
   '$' + Math.round(n).toLocaleString('en-AU');
 
+const fmtBudget = (n: number): string => {
+  if (n >= 1_000_000) {
+    const m = n / 1_000_000;
+    return '$' + (m % 1 === 0 ? m.toFixed(0) : m.toFixed(2).replace(/\.?0+$/, '')) + 'M';
+  }
+  if (n >= 10_000) return '$' + Math.round(n / 1000) + 'k';
+  return fmtMoney(n);
+};
+
+const ensureQuPrefix = (v: string): string => {
+  if (!v) return 'QU-';
+  return v.toUpperCase().startsWith('QU-') ? v : `QU-${v.replace(/^QU-/i, '')}`;
+};
+
+const quoteNumFilled = (v: string): boolean => {
+  const t = v.trim();
+  return t.length > 0 && t !== 'QU-';
+};
+
 const loadQuotesLocal = (): CrmQuote[] => {
   try {
     const v = localStorage.getItem(LS_QUOTES);
@@ -149,7 +168,7 @@ const QuoteModal: React.FC<{
   onSave: (q: CrmQuote) => void;
   onClose: () => void;
 }> = ({ initial, persons, companies, onSave, onClose }) => {
-  const [d, setD] = React.useState<CrmQuote>(initial);
+  const [d, setD] = React.useState<CrmQuote>(() => ({ ...initial, quoteNum: ensureQuPrefix(initial.quoteNum) }));
   const [attachments, setAttachments] = React.useState<CrmAttachment[]>(() => getQuoteAttachments(initial.id));
   const set = <K extends keyof CrmQuote>(k: K, v: CrmQuote[K]): void => setD(p => ({ ...p, [k]: v }));
   const grid2: React.CSSProperties = { display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '14px 18px' };
@@ -180,7 +199,7 @@ const QuoteModal: React.FC<{
     }));
   };
 
-  const canSave = !d.createQuoteXero || d.quoteNum.trim().length > 0;
+  const canSave = !d.createQuoteXero || quoteNumFilled(d.quoteNum);
 
   return (
     <div style={{ position: 'fixed', inset: 0, background: 'rgba(0,0,0,.45)', zIndex: 1000, display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
@@ -293,12 +312,15 @@ const QuoteModal: React.FC<{
           </div>
           <div style={{ marginBottom: 14 }}>
             <label style={ml}>Quote # (Xero)</label>
-            <input
-              value={d.quoteNum}
-              onChange={e => set('quoteNum', e.target.value)}
-              style={mi}
-              placeholder="QU-0490"
-            />
+            <div style={{ display: 'flex', border: `1px solid ${C.borderMd}`, borderRadius: 4, overflow: 'hidden', background: C.surface }}>
+              <span style={{ padding: '8px 10px', fontFamily: FF, fontWeight: 700, fontSize: 12.5, color: C.purple, background: C.thBg, borderRight: `1px solid ${C.borderMd}`, whiteSpace: 'nowrap' }}>QU-</span>
+              <input
+                value={d.quoteNum.startsWith('QU-') ? d.quoteNum.slice(3) : d.quoteNum}
+                onChange={e => set('quoteNum', 'QU-' + e.target.value.replace(/^QU-/i, ''))}
+                style={{ ...mi, border: 'none', borderRadius: 0 }}
+                placeholder="0490"
+              />
+            </div>
           </div>
           <div>
             <label style={ml}>Notes</label>
@@ -312,7 +334,7 @@ const QuoteModal: React.FC<{
             onClick={() => {
               if (canSave) {
                 setQuoteAttachments(d.id, attachments);
-                onSave({ ...d, quoteNum: d.quoteNum.trim() });
+                onSave({ ...d, quoteNum: quoteNumFilled(d.quoteNum) ? d.quoteNum.trim() : '' });
               }
             }}
             style={{ padding: '8px 20px', borderRadius: 4, border: 'none', background: canSave ? C.green : C.borderMd, color: '#fff', fontFamily: FF, fontWeight: 700, fontSize: 12, cursor: canSave ? 'pointer' : 'default' }}
@@ -340,6 +362,37 @@ const KpiCard: React.FC<{
       <div style={{ fontFamily: FF, fontSize: 9, fontWeight: 700, letterSpacing: '.08em', color: C.muted, textTransform: 'uppercase' }}>{label}</div>
       <div style={{ fontFamily: FF, fontSize: 22, fontWeight: 700, color: C.text, marginTop: 4 }}>{value}</div>
       <div style={{ fontFamily: FF, fontSize: 11, color: C.muted, marginTop: 2 }}>{sub}</div>
+    </div>
+  </div>
+);
+
+const BudgetKpiCard: React.FC<{
+  label: string;
+  actual: number;
+  target: number;
+  pct: number | null;
+  accent: string;
+  onClick: () => void;
+}> = ({ label, actual, target, pct, accent, onClick }) => (
+  <div
+    onClick={onClick}
+    style={{
+      flex: '1 1 130px', background: C.surface, border: `1px solid ${C.border}`, borderRadius: 6,
+      overflow: 'hidden', minWidth: 110, cursor: 'pointer',
+    }}
+  >
+    <div style={{ height: 3, background: accent }} />
+    <div style={{ padding: '12px 14px' }}>
+      <div style={{ fontFamily: FF, fontSize: 9, fontWeight: 700, letterSpacing: '.08em', color: C.muted, textTransform: 'uppercase' }}>{label}</div>
+      <div style={{ fontFamily: FF, fontSize: 22, fontWeight: 700, color: C.text, marginTop: 4, lineHeight: 1.2 }}>
+        {fmtMoney(actual)}
+      </div>
+      <div style={{ fontFamily: FF, fontSize: 11, color: C.sub, marginTop: 4 }}>
+        of {target > 0 ? fmtBudget(target) : '—'} budget
+      </div>
+      <div style={{ fontFamily: FF, fontSize: 10, color: C.muted, marginTop: 2 }}>
+        {pct !== null ? `${pct}% achieved` : 'click to set budget'}
+      </div>
     </div>
   </div>
 );
@@ -482,11 +535,15 @@ const CrmQuotesTab: React.FC<{
       .reduce((s, p) => s + (p.projectValue || 0), 0);
     const yearPct = budget.yearTarget > 0 ? Math.round((yearActual / budget.yearTarget) * 100) : null;
     const monthPct = budget.monthTarget > 0 ? Math.round((monthActual / budget.monthTarget) * 100) : null;
+    const won = wonProjects.length;
+    const decided = won + lost.length;
+    const winRate = decided > 0 ? Math.round((won / decided) * 100) : 0;
     return {
       total: yearQuotes.length,
       sent: sent.length,
       lost: lost.length,
-      won: wonProjects.length,
+      won,
+      winRate,
       totalHours,
       yearActual,
       monthActual,
@@ -566,20 +623,27 @@ const CrmQuotesTab: React.FC<{
       <div style={{ display: 'flex', gap: 12, flexWrap: 'wrap', padding: '16px 0 12px 0' }}>
         <KpiCard label="Total Quotes" accent={C.purple} value={String(stats.total)} sub={`${year} year`} />
         <KpiCard label="Sent" accent="#3b82c4" value={String(stats.sent)} sub="awaiting response" />
-        <KpiCard label="Won" accent={C.green} value={String(stats.won)} sub="moved to projects" />
-        <KpiCard label="Lost" accent={C.red} value={String(stats.lost)} sub="declined" />
         <KpiCard
+          label="Win Rate"
+          accent={C.green}
+          value={`${stats.winRate}%`}
+          sub={`${stats.won} won · ${stats.lost} lost`}
+        />
+        <KpiCard label="Lost" accent={C.red} value={String(stats.lost)} sub="declined" />
+        <BudgetKpiCard
           label="Quote Budget Year"
+          actual={stats.yearActual}
+          target={budget.yearTarget}
+          pct={stats.yearPct}
           accent="#b36a00"
-          value={`${fmtMoney(stats.yearActual)} / ${budget.yearTarget ? fmtMoney(budget.yearTarget) : '—'}`}
-          sub={stats.yearPct !== null ? `${stats.yearPct}% of year budget · click to edit` : 'actual vs budget · click to set'}
           onClick={() => setBudgetModal(true)}
         />
-        <KpiCard
+        <BudgetKpiCard
           label="Quote Budget Month"
+          actual={stats.monthActual}
+          target={budget.monthTarget}
+          pct={stats.monthPct}
           accent="#d97706"
-          value={`${fmtMoney(stats.monthActual)} / ${budget.monthTarget ? fmtMoney(budget.monthTarget) : '—'}`}
-          sub={stats.monthPct !== null ? `${stats.monthPct}% of month budget · click to edit` : `${new Date().toLocaleString('en-AU', { month: 'short' })} actual vs budget`}
           onClick={() => setBudgetModal(true)}
         />
         <KpiCard label="Hours Est" accent="#0d9488" value={String(stats.totalHours)} sub="total estimated hours" />
