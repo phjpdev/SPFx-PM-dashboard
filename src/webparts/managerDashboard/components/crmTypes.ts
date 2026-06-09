@@ -60,9 +60,11 @@ export interface CrmRfq {
   approximateHours: number;
   engineerDrawingReceived: boolean;
   engineerDrawingDate: string;
+  revisionVersionEng: string;
   architectDrawingReceived: boolean;
   architectDrawingDate: string;
-  rfiAllowed: boolean;
+  revisionVersionArch: string;
+  rfiAllowed: number;
   createQuoteXero: boolean;
   relatedRfqId: string;
   notes: string;
