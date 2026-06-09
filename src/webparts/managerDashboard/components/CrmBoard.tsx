@@ -6,7 +6,7 @@ import CrmRfqTab from './CrmRfqTab';
 import CrmQuotesTab from './CrmQuotesTab';
 import CrmProjectsTab from './CrmProjectsTab';
 import type { SharePointService } from '../../../shared/services/SharePointService';
-import type { CrmPhone, CrmEmail, CrmPerson, CrmCompany, CrmActivity, CrmActivityType, CrmAttachment, CrmQuote, CrmProject } from './crmTypes';
+import type { CrmPhone, CrmEmail, CrmPerson, CrmCompany, CrmActivity, CrmActivityType, CrmAttachment, CrmQuote } from './crmTypes';
 
 export interface CrmBoardProps {
   spService: SharePointService;
@@ -1046,9 +1046,8 @@ const TdIndex: React.FC<{ children: React.ReactNode }> = ({ children }) => (
 const CrmBoard: React.FC<CrmBoardProps> = ({ spService }) => {
   const [tab, setTab]             = React.useState<CrmTab>('persons');
   const [quotesSeed, setQuotesSeed] = React.useState<CrmQuote[] | null>(null);
-  const [projectsSeed, setProjectsSeed] = React.useState<CrmProject[] | null>(null);
+  const [projectsRefreshKey, setProjectsRefreshKey] = React.useState(0);
   const clearQuotesSeed = React.useCallback((): void => setQuotesSeed(null), []);
-  const clearProjectsSeed = React.useCallback((): void => setProjectsSeed(null), []);
   const [persons, setPersons]     = React.useState<CrmPerson[]>(() => cloneStaticCrm().persons);
   const [companies, setCompanies] = React.useState<CrmCompany[]>(() => cloneStaticCrm().companies);
   const [crmReady, setCrmReady]   = React.useState(false);
@@ -1515,9 +1514,9 @@ const CrmBoard: React.FC<CrmBoardProps> = ({ spService }) => {
             companies={companies}
             seedQuotes={quotesSeed}
             onSeedApplied={clearQuotesSeed}
-            onQuoteWon={(projects, quotes) => {
-              setProjectsSeed(projects);
+            onQuoteWon={(_projects, quotes) => {
               setQuotesSeed(quotes);
+              setProjectsRefreshKey(k => k + 1);
               setTab('projects');
             }}
           />
@@ -1526,13 +1525,7 @@ const CrmBoard: React.FC<CrmBoardProps> = ({ spService }) => {
 
       {tab === 'projects' && (
         <div style={{ background: C.surface, border: `1px solid ${C.border}`, borderTop: 'none', borderRadius: '0 0 8px 8px', padding: '0 16px 16px 16px', overflowX: 'hidden', maxWidth: '100%', boxSizing: 'border-box' }}>
-          <CrmProjectsTab
-            spService={spService}
-            persons={persons}
-            companies={companies}
-            seedProjects={projectsSeed}
-            onSeedApplied={clearProjectsSeed}
-          />
+          <CrmProjectsTab spService={spService} refreshKey={projectsRefreshKey} />
         </div>
       )}
 
