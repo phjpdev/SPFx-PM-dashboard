@@ -544,6 +544,7 @@ const PersonModal: React.FC<{
   const [editing, setEditing] = React.useState(isNew || !openInView);
   const [d, setD] = React.useState<CrmPerson>(() => normalizePerson(initial));
   const snapshotRef = React.useRef<CrmPerson>(normalizePerson(initial));
+  const lockedActivityIdsRef = React.useRef<Set<string>>(new Set());
   const set = <K extends keyof CrmPerson>(k: K, v: CrmPerson[K]): void => setD(p => ({ ...p, [k]: v }));
   const activities = d.activities ?? [];
   const attachments = d.attachments ?? [];
@@ -552,7 +553,13 @@ const PersonModal: React.FC<{
   const readOnly = !editing;
 
   React.useEffect(() => {
-    setEditing(isNew || !openInView);
+    const nextEditing = isNew || !openInView;
+    setEditing(nextEditing);
+    if (nextEditing && !isNew) {
+      lockedActivityIdsRef.current = new Set((normalizePerson(initial).activities ?? []).map(a => a.id));
+    } else if (isNew) {
+      lockedActivityIdsRef.current = new Set();
+    }
   }, [initial.id, isNew, openInView]);
 
   React.useEffect(() => {
@@ -679,6 +686,9 @@ const PersonModal: React.FC<{
             {!readOnly && sortedActivities.map(a => {
               const idx = activities.findIndex(x => x.id === a.id);
               if (idx < 0) return null;
+              if (lockedActivityIdsRef.current.has(a.id)) {
+                return <ActivityReadCard key={a.id} activity={a} />;
+              }
               return (
                 <div
                   key={a.id}
@@ -796,7 +806,10 @@ const PersonModal: React.FC<{
       <ViewModalFooter
         editing={editing}
         isNew={isNew}
-        onEdit={() => setEditing(true)}
+        onEdit={() => {
+          lockedActivityIdsRef.current = new Set((d.activities ?? []).map(a => a.id));
+          setEditing(true);
+        }}
         onDelete={handleDelete}
         onSave={handleSave}
         onCancel={handleCancel}

@@ -35,6 +35,7 @@ export const quoteCoreFromQuote = (q: CrmQuote): Omit<CrmProject, 'id' | 'projNu
   dateReceived: q.dateReceived,
   personId: q.personId,
   organizationId: q.organizationId,
+  companyAddress: q.companyAddress || '',
   projectTitle: q.projectTitle,
   projectAddress: q.projectAddress,
   discipline: q.discipline,

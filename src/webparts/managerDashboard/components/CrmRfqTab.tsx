@@ -69,6 +69,7 @@ const rfqToQuote = (rfq: CrmRfq, quoteNum: string): CrmQuote => ({
   dateReceived: rfq.dateReceived,
   personId: rfq.personId,
   organizationId: rfq.organizationId,
+  companyAddress: rfq.companyAddress,
   projectTitle: rfq.projectTitle,
   projectAddress: rfq.projectAddress,
   discipline: rfq.discipline,
@@ -87,6 +88,7 @@ const rfqToQuote = (rfq: CrmRfq, quoteNum: string): CrmQuote => ({
   notes: rfq.notes,
   createQuoteXero: false,
   relatedRfqId: rfq.relatedRfqId,
+  lostReason: '',
   status: 'Draft',
 });
 
@@ -96,6 +98,7 @@ const emptyRfq = (rfqs: CrmRfq[], quotes: CrmQuote[] = [], projects: { rfqNum: s
   dateReceived: todayIso(),
   personId: '',
   organizationId: '',
+  companyAddress: '',
   projectTitle: '',
   projectAddress: '',
   discipline: 'Steel',
@@ -154,6 +157,7 @@ const normalizeRfq = (r: CrmRfq): CrmRfq => ({
   architectDrawingDate: r.architectDrawingDate || '',
   revisionVersionArch: r.revisionVersionArch || '',
   rfiAllowed: typeof r.rfiAllowed === 'number' ? r.rfiAllowed : (r.rfiAllowed ? 1 : 0),
+  companyAddress: r.companyAddress || '',
 });
 
 const DrawingReceivedField: React.FC<{
@@ -267,6 +271,11 @@ const RfqModal: React.FC<{
   const grid2: React.CSSProperties = { display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '14px 18px' };
   const isNew = !rfqs.some(r => r.id === initial.id);
 
+  const sortedCompanies = React.useMemo(
+    () => [...companies].sort((a, b) => a.name.localeCompare(b.name, 'en', { sensitivity: 'base' })),
+    [companies],
+  );
+
   const personsForCo = d.organizationId
     ? persons.filter(p => p.organizationId === d.organizationId)
     : persons;
@@ -278,7 +287,7 @@ const RfqModal: React.FC<{
       ...p,
       personId,
       organizationId: person?.organizationId || p.organizationId,
-      projectAddress: co?.address || p.projectAddress,
+      companyAddress: co?.address || p.companyAddress,
     }));
   };
 
@@ -289,7 +298,7 @@ const RfqModal: React.FC<{
       ...p,
       organizationId,
       personId: personStillValid ? p.personId : '',
-      projectAddress: co?.address || p.projectAddress,
+      companyAddress: co?.address || '',
     }));
   };
 
@@ -305,8 +314,17 @@ const RfqModal: React.FC<{
             <label style={ml}>Company</label>
             <select value={d.organizationId} onChange={e => onCompanyChange(e.target.value)} style={mi}>
               <option value="">— Select company —</option>
-              {companies.map(c => <option key={c.id} value={c.id}>{c.name}</option>)}
+              {sortedCompanies.map(c => <option key={c.id} value={c.id}>{c.name}</option>)}
             </select>
+          </div>
+          <div style={{ marginBottom: 14 }}>
+            <label style={ml}>Company Address</label>
+            <input
+              value={d.companyAddress}
+              onChange={e => set('companyAddress', e.target.value)}
+              style={mi}
+              placeholder="Company address"
+            />
           </div>
           <div style={{ marginBottom: 14 }}>
             <label style={ml}>Contact Person</label>
@@ -390,15 +408,6 @@ const RfqModal: React.FC<{
                 {STAGES.map(s => <option key={s} value={s}>{s}</option>)}
               </select>
             </div>
-          </div>
-          <div style={{ marginTop: 14 }}>
-            <label style={ml}>Related RFQ (optional)</label>
-            <select value={d.relatedRfqId} onChange={e => set('relatedRfqId', e.target.value)} style={mi}>
-              <option value="">— None —</option>
-              {rfqs.filter(r => r.id !== d.id).map(r => (
-                <option key={r.id} value={r.id}>{r.rfqNum} — {r.projectTitle || 'Untitled'}</option>
-              ))}
-            </select>
           </div>
           <div style={{ marginTop: 14 }}>
             <label style={ml}>Notes</label>

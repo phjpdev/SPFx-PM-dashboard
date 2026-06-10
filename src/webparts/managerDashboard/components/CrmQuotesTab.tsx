@@ -8,7 +8,7 @@ import {
 } from './crmStorage';
 import { nextProjNum, quoteToCrmProject, quoteToIProject } from './crmProjectHelpers';
 import type { SharePointService } from '../../../shared/services/SharePointService';
-import type { CrmAttachment, CrmPerson, CrmCompany, CrmProject, CrmQuote, CrmQuoteStatus, CrmRfqDiscipline } from './crmTypes';
+import type { CrmAttachment, CrmPerson, CrmCompany, CrmProject, CrmQuote, CrmQuoteStatus, CrmLostReason, CrmRfqDiscipline } from './crmTypes';
 
 const FF = 'Montserrat,sans-serif';
 const LS_QUOTES = '3edge-crm-quotes';
@@ -23,6 +23,15 @@ const QUOTE_STATUSES: CrmQuoteStatus[] = ['Draft', 'Sent', 'Lost'];
 const DISCIPLINES: CrmRfqDiscipline[] = ['Steel', 'Concrete', 'Both'];
 const SOURCES = ['Email', 'Phone', 'Referral', 'Repeat Client', 'Website', 'Other'];
 const OWNERS = ['MK', 'SK', 'DC', 'JP'];
+
+const LOST_REASONS: CrmLostReason[] = [
+  'Price was too high',
+  'Price was too low',
+  'Client lost project',
+  'Inexperienced',
+  'Project been cancelled',
+  'Other',
+];
 
 const mi: React.CSSProperties = {
   padding: '8px 10px', background: C.surface, border: `1px solid ${C.borderMd}`,
@@ -88,7 +97,9 @@ const normalizeQuote = (q: CrmQuote): CrmQuote => {
     revisionVersionArch: q.revisionVersionArch || '',
     quoteRequiredBy: q.quoteRequiredBy || '',
     relatedRfqId: q.relatedRfqId || '',
+    lostReason: q.lostReason || '',
     createQuoteXero: !!q.createQuoteXero,
+    companyAddress: q.companyAddress || '',
     status,
   };
 };
@@ -173,6 +184,11 @@ const QuoteModal: React.FC<{
   const set = <K extends keyof CrmQuote>(k: K, v: CrmQuote[K]): void => setD(p => ({ ...p, [k]: v }));
   const grid2: React.CSSProperties = { display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '14px 18px' };
 
+  const sortedCompanies = React.useMemo(
+    () => [...companies].sort((a, b) => a.name.localeCompare(b.name, 'en', { sensitivity: 'base' })),
+    [companies],
+  );
+
   const personsForCo = d.organizationId
     ? persons.filter(p => p.organizationId === d.organizationId)
     : persons;
@@ -184,7 +200,7 @@ const QuoteModal: React.FC<{
       ...p,
       personId,
       organizationId: person?.organizationId || p.organizationId,
-      projectAddress: co?.address || p.projectAddress,
+      companyAddress: co?.address || p.companyAddress,
     }));
   };
 
@@ -195,7 +211,7 @@ const QuoteModal: React.FC<{
       ...p,
       organizationId,
       personId: personStillValid ? p.personId : '',
-      projectAddress: co?.address || p.projectAddress,
+      companyAddress: co?.address || '',
     }));
   };
 
@@ -213,8 +229,17 @@ const QuoteModal: React.FC<{
             <label style={ml}>Company</label>
             <select value={d.organizationId} onChange={e => onCompanyChange(e.target.value)} style={mi}>
               <option value="">— Select company —</option>
-              {companies.map(c => <option key={c.id} value={c.id}>{c.name}</option>)}
+              {sortedCompanies.map(c => <option key={c.id} value={c.id}>{c.name}</option>)}
             </select>
+          </div>
+          <div style={{ marginBottom: 14 }}>
+            <label style={ml}>Company Address</label>
+            <input
+              value={d.companyAddress}
+              onChange={e => set('companyAddress', e.target.value)}
+              style={mi}
+              placeholder="Company address"
+            />
           </div>
           <div style={{ marginBottom: 14 }}>
             <label style={ml}>Contact Person</label>
@@ -397,6 +422,48 @@ const BudgetKpiCard: React.FC<{
   </div>
 );
 
+const LostReasonModal: React.FC<{
+  quote: CrmQuote;
+  onConfirm: (reason: CrmLostReason) => void;
+  onClose: () => void;
+}> = ({ quote, onConfirm, onClose }) => {
+  const [reason, setReason] = React.useState<CrmLostReason | ''>('');
+  return (
+    <div style={{ position: 'fixed', inset: 0, background: 'rgba(0,0,0,.45)', zIndex: 1001, display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
+      <div style={{ background: C.surface, borderRadius: 8, width: 440, boxShadow: '0 12px 40px rgba(0,0,0,.18)', border: `1px solid ${C.border}` }}>
+        <div style={{ padding: '14px 20px', borderBottom: `1px solid ${C.border}`, background: C.thBg }}>
+          <span style={{ fontFamily: FF, fontWeight: 700, fontSize: 14, color: C.text }}>Mark as Lost</span>
+        </div>
+        <div style={{ padding: '20px 22px' }}>
+          <p style={{ fontFamily: FF, fontSize: 12, color: C.sub, margin: '0 0 14px 0', lineHeight: 1.5 }}>
+            Mark <strong style={{ color: '#0d9488' }}>{quote.rfqNum}</strong>
+            {quote.projectTitle ? ` — ${quote.projectTitle}` : ''} as lost.
+          </p>
+          <label style={ml}>Reason lost</label>
+          <select
+            value={reason}
+            onChange={e => setReason(e.target.value as CrmLostReason)}
+            style={mi}
+          >
+            <option value="">— Select reason —</option>
+            {LOST_REASONS.map(r => <option key={r} value={r}>{r}</option>)}
+          </select>
+        </div>
+        <div style={{ display: 'flex', gap: 10, justifyContent: 'flex-end', padding: '14px 22px', borderTop: `1px solid ${C.border}` }}>
+          <button onClick={onClose} style={{ padding: '8px 20px', borderRadius: 4, border: `1px solid ${C.borderMd}`, background: 'transparent', color: C.sub, fontFamily: FF, fontSize: 12, cursor: 'pointer' }}>Cancel</button>
+          <button
+            onClick={() => { if (reason) onConfirm(reason); }}
+            disabled={!reason}
+            style={{ padding: '8px 20px', borderRadius: 4, border: 'none', background: reason ? C.red : C.borderMd, color: '#fff', fontFamily: FF, fontWeight: 700, fontSize: 12, cursor: reason ? 'pointer' : 'default' }}
+          >
+            Mark Lost
+          </button>
+        </div>
+      </div>
+    </div>
+  );
+};
+
 const BudgetEditModal: React.FC<{
   budget: CrmQuoteBudget;
   onSave: (b: CrmQuoteBudget) => void;
@@ -444,6 +511,7 @@ const CrmQuotesTab: React.FC<{
   const [search, setSearch] = React.useState('');
   const [statusFilter, setStatusFilter] = React.useState('all');
   const [modal, setModal] = React.useState<CrmQuote | null>(null);
+  const [lostQuote, setLostQuote] = React.useState<CrmQuote | null>(null);
   const quotesRef = React.useRef(quotes);
   quotesRef.current = quotes;
   const saveTimerRef = React.useRef<ReturnType<typeof setTimeout> | null>(null);
@@ -577,9 +645,11 @@ const CrmQuotesTab: React.FC<{
     setModal(null);
   };
 
-  const markLost = (item: CrmQuote): void => {
-    if (!confirm(`Mark ${item.rfqNum} as LOST?`)) return;
-    persistQuotes(quotesRef.current.map(x => x.id === item.id ? { ...x, status: 'Lost' as CrmQuoteStatus } : x));
+  const markLost = (item: CrmQuote, reason: CrmLostReason): void => {
+    persistQuotes(quotesRef.current.map(x => x.id === item.id
+      ? { ...x, status: 'Lost' as CrmQuoteStatus, lostReason: reason }
+      : x));
+    setLostQuote(null);
   };
 
   const markWon = (item: CrmQuote): void => {
@@ -713,7 +783,7 @@ const CrmQuotesTab: React.FC<{
                     {item.status !== 'Lost' && (
                       <>
                         <button onClick={() => markWon(item)} style={{ ...actionBtn, border: 'none', background: C.green, color: '#fff' }}>WON</button>
-                        <button onClick={() => markLost(item)} style={{ ...actionBtn, border: `1px solid ${C.red}`, background: 'transparent', color: C.red }}>LOST</button>
+                        <button onClick={() => setLostQuote(item)} style={{ ...actionBtn, border: `1px solid ${C.red}`, background: 'transparent', color: C.red }}>LOST</button>
                       </>
                     )}
                     <button onClick={() => deleteQuote(item.id)} style={{ ...actionBtn, border: `1px solid ${C.borderMd}`, background: 'transparent', color: C.muted, fontSize: 9 }}>Del</button>
@@ -735,6 +805,13 @@ const CrmQuotesTab: React.FC<{
           companies={companies}
           onSave={saveQuote}
           onClose={() => setModal(null)}
+        />
+      )}
+      {lostQuote && (
+        <LostReasonModal
+          quote={lostQuote}
+          onConfirm={reason => markLost(lostQuote, reason)}
+          onClose={() => setLostQuote(null)}
         />
       )}
       {budgetModal && (

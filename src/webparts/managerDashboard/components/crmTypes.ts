@@ -51,6 +51,7 @@ export interface CrmEnquiryCore {
   dateReceived: string;
   personId: string;
   organizationId: string;
+  companyAddress: string;
   projectTitle: string;
   projectAddress: string;
   discipline: CrmRfqDiscipline;
@@ -79,6 +80,14 @@ export interface CrmRfq extends CrmEnquiryCore {
 
 export type CrmQuoteStatus = 'Draft' | 'Sent' | 'Lost';
 
+export type CrmLostReason =
+  | 'Price was too high'
+  | 'Price was too low'
+  | 'Client lost project'
+  | 'Inexperienced'
+  | 'Project been cancelled'
+  | 'Other';
+
 /** Quote created from an RFQ at Ready to Quote stage. */
 export interface CrmQuote extends CrmEnquiryCore {
   id: string;
@@ -88,6 +97,7 @@ export interface CrmQuote extends CrmEnquiryCore {
   quotedDate: string;
   createQuoteXero: boolean;
   relatedRfqId: string;
+  lostReason: string;
   status: CrmQuoteStatus;
 }
 
