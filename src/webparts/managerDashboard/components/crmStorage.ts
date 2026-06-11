@@ -1,15 +1,7 @@
 import type { SharePointService } from '../../../shared/services/SharePointService';
 import type { CrmPerson, CrmCompany, CrmRfq, CrmQuote, CrmProject } from './crmTypes';
+import { normalizeCrmQuote, normalizeCrmRfq } from './crmRfqNormalize';
 import { cloneStaticCrm } from './crmStaticData';
-
-/** Site-wide CRM delta index (small JSON — one row per changed person/company). */
-export const CRM_SP_DELTA_META = 'crm_delta_meta';
-/** Legacy monolithic delta — read-only fallback. */
-export const CRM_SP_DELTA = 'crm_delta';
-export const CRM_SP_RFQS = 'crm_rfqs';
-export const CRM_SP_QUOTES = 'crm_quotes';
-export const CRM_SP_PROJECTS = 'crm_projects';
-export const CRM_SP_QUOTE_BUDGET = 'crm_quote_budget';
 
 export interface CrmQuoteBudget {
   year: number;
@@ -17,14 +9,11 @@ export interface CrmQuoteBudget {
   monthTarget: number;
 }
 
-const LS_DELTA = '3edge-crm-delta';
-const LS_PERSONS = '3edge-crm-persons';
-const LS_COMPANIES = '3edge-crm-companies';
-const LS_RFQS = '3edge-crm-rfqs';
-const LS_QUOTES = '3edge-crm-quotes';
-const LS_PROJECTS = '3edge-crm-projects';
-const LS_QUOTE_BUDGET = '3edge-crm-quote-budget';
-
+/**
+ * Kept for API compatibility with CrmBoard — the revision field is used to
+ * detect concurrent saves. With proper SP lists each record has its own
+ * version, so we return a simple timestamp-based value.
+ */
 export interface CrmDelta {
   revision: number;
   updatedAt: string;
@@ -34,52 +23,28 @@ export interface CrmDelta {
   deletedCompanyIds: string[];
 }
 
-interface CrmDeltaMeta {
-  revision: number;
-  updatedAt: string;
-  personIds: string[];
-  companyIds: string[];
-  deletedPersonIds: string[];
-  deletedCompanyIds: string[];
-}
-
 export interface CrmListsSnapshot {
   persons: CrmPerson[];
   companies: CrmCompany[];
 }
 
-const emptyDelta = (): CrmDelta => ({
-  revision: 0,
-  updatedAt: '',
-  persons: {},
-  companies: {},
-  deletedPersonIds: [],
-  deletedCompanyIds: [],
-});
+const CRM_SP_QUOTE_BUDGET = 'crm_quote_budget';
+
+const LS_PERSONS   = '3edge-crm-persons';
+const LS_COMPANIES = '3edge-crm-companies';
+const LS_RFQS      = '3edge-crm-rfqs';
+const LS_QUOTES    = '3edge-crm-quotes';
+const LS_PROJECTS  = '3edge-crm-projects';
+const LS_QUOTE_BUDGET = '3edge-crm-quote-budget';
 
 const loadLS = <T,>(k: string, fb: T): T => {
   try {
     const v = localStorage.getItem(k);
     return v ? (JSON.parse(v) as T) : fb;
-  } catch {
-    return fb;
-  }
+  } catch { return fb; }
 };
 
-const jsonEq = (a: unknown, b: unknown): boolean => JSON.stringify(a) === JSON.stringify(b);
-
-const spKey = (prefix: string, id: string): string =>
-  `${prefix}${id.replace(/[^a-zA-Z0-9_-]/g, '_')}`;
-
-const spKeyPerson = (id: string): string => spKey('crm_p_', id);
-const spKeyCompany = (id: string): string => spKey('crm_c_', id);
-
-/** Attachments stay in browser storage only (base64 is too large for 3Edge_Settings). */
-const personForSp = (p: CrmPerson): CrmPerson => {
-  const { attachments: _a, ...rest } = p;
-  return rest;
-};
-
+/** Overlay base64 attachments (stored locally only — too large for SP columns). */
 const overlayLocalAttachments = (persons: CrmPerson[], local: CrmPerson[]): CrmPerson[] => {
   const attMap = new Map<string, CrmPerson['attachments']>();
   for (const p of local) {
@@ -87,254 +52,167 @@ const overlayLocalAttachments = (persons: CrmPerson[], local: CrmPerson[]): CrmP
   }
   if (!attMap.size) return persons;
   return persons.map(p => {
-    const attachments = attMap.get(p.id);
-    return attachments ? { ...p, attachments } : p;
+    const a = attMap.get(p.id);
+    return a ? { ...p, attachments: a } : p;
   });
 };
 
-/** Merge static baseline + delta overrides. */
-export function applyDelta(baseline: CrmListsSnapshot, delta: CrmDelta | null): CrmListsSnapshot {
-  if (!delta) {
-    return { persons: [...baseline.persons], companies: [...baseline.companies] };
-  }
-  const deletedP = new Set(delta.deletedPersonIds || []);
-  const deletedC = new Set(delta.deletedCompanyIds || []);
-
-  const personMap = new Map<string, CrmPerson>();
-  for (const p of baseline.persons) {
-    if (!deletedP.has(p.id)) personMap.set(p.id, p);
-  }
-  for (const p of Object.values(delta.persons || {})) {
-    personMap.set(p.id, p);
-  }
-
-  const companyMap = new Map<string, CrmCompany>();
-  for (const c of baseline.companies) {
-    if (!deletedC.has(c.id)) companyMap.set(c.id, c);
-  }
-  for (const c of Object.values(delta.companies || {})) {
-    companyMap.set(c.id, c);
-  }
-
-  return { persons: Array.from(personMap.values()), companies: Array.from(companyMap.values()) };
+/** SP wins on same id; local-only rows not yet synced are kept. */
+export function mergeCrmRemoteList<T extends { id: string }>(remote: T[], local: T[]): T[] {
+  const map = new Map<string, T>();
+  local.forEach(x => map.set(x.id, x));
+  remote.forEach(x => map.set(x.id, x));
+  return Array.from(map.values());
 }
 
-/** Only records that differ from the bundled static import. */
-export function computeDelta(baseline: CrmListsSnapshot, current: CrmListsSnapshot): CrmDelta {
-  const baseP = new Map(baseline.persons.map(p => [p.id, p]));
-  const baseC = new Map(baseline.companies.map(c => [c.id, c]));
-  const curP = new Map(current.persons.map(p => [p.id, p]));
-  const curC = new Map(current.companies.map(c => [c.id, c]));
+// ── Persons & Companies ────────────────────────────────────────────────────
 
-  const persons: Record<string, CrmPerson> = {};
-  const companies: Record<string, CrmCompany> = {};
-  const deletedPersonIds: string[] = [];
-  const deletedCompanyIds: string[] = [];
-
-  curP.forEach((p, id) => {
-    const b = baseP.get(id);
-    if (!b || !jsonEq(b, p)) persons[id] = p;
-  });
-  baseP.forEach((_, id) => {
-    if (!curP.has(id)) deletedPersonIds.push(id);
-  });
-
-  curC.forEach((c, id) => {
-    const b = baseC.get(id);
-    if (!b || !jsonEq(b, c)) companies[id] = c;
-  });
-  baseC.forEach((_, id) => {
-    if (!curC.has(id)) deletedCompanyIds.push(id);
-  });
-
-  return { revision: 0, updatedAt: new Date().toISOString(), persons, companies, deletedPersonIds, deletedCompanyIds };
-}
-
-async function loadLegacyDeltaFromSp(sp: SharePointService): Promise<CrmDelta | null> {
-  try {
-    const json = await sp.getSettingChunks(CRM_SP_DELTA);
-    if (!json) return null;
-    const d = JSON.parse(json) as CrmDelta;
-    return d && typeof d === 'object' ? d : null;
-  } catch {
-    return null;
-  }
-}
-
-async function loadDeltaFromSp(sp: SharePointService): Promise<CrmDelta | null> {
-  try {
-    const metaJson = await sp.getSettingChunks(CRM_SP_DELTA_META);
-    if (!metaJson) return loadLegacyDeltaFromSp(sp);
-
-    const meta = JSON.parse(metaJson) as CrmDeltaMeta;
-    const persons: Record<string, CrmPerson> = {};
-    const companies: Record<string, CrmCompany> = {};
-
-    for (const id of meta.personIds || []) {
-      const j = await sp.getSettingChunks(spKeyPerson(id));
-      if (j) persons[id] = JSON.parse(j) as CrmPerson;
-    }
-    for (const id of meta.companyIds || []) {
-      const j = await sp.getSettingChunks(spKeyCompany(id));
-      if (j) companies[id] = JSON.parse(j) as CrmCompany;
-    }
-
-    return {
-      revision: meta.revision || 0,
-      updatedAt: meta.updatedAt || '',
-      persons,
-      companies,
-      deletedPersonIds: meta.deletedPersonIds || [],
-      deletedCompanyIds: meta.deletedCompanyIds || [],
-    };
-  } catch {
-    return loadLegacyDeltaFromSp(sp);
-  }
-}
-
-async function saveDeltaToSp(sp: SharePointService, delta: CrmDelta): Promise<void> {
-  const meta: CrmDeltaMeta = {
-    revision: delta.revision,
-    updatedAt: delta.updatedAt,
-    personIds: Object.keys(delta.persons),
-    companyIds: Object.keys(delta.companies),
-    deletedPersonIds: delta.deletedPersonIds,
-    deletedCompanyIds: delta.deletedCompanyIds,
-  };
-  await sp.setSettingChunks(CRM_SP_DELTA_META, JSON.stringify(meta));
-  await Promise.all(Object.keys(delta.persons).map(async id => {
-    await sp.setSettingChunks(spKeyPerson(id), JSON.stringify(personForSp(delta.persons[id])));
-  }));
-  await Promise.all(Object.keys(delta.companies).map(async id => {
-    await sp.setSettingChunks(spKeyCompany(id), JSON.stringify(delta.companies[id]));
-  }));
-}
-
-function loadDeltaLocal(): CrmDelta | null {
-  return loadLS<CrmDelta | null>(LS_DELTA, null);
-}
-
-function pickNewerDelta(a: CrmDelta | null, b: CrmDelta | null): CrmDelta | null {
-  if (!a) return b;
-  if (!b) return a;
-  return (a.revision || 0) >= (b.revision || 0) ? a : b;
-}
-
-/** Static baseline + SharePoint/local delta (newest revision wins). */
 export async function loadCrmPersonsCompanies(sp: SharePointService): Promise<CrmListsSnapshot> {
-  const baseline = cloneStaticCrm();
-  const fromSp = await loadDeltaFromSp(sp);
-  const fromLocal = loadDeltaLocal();
-  const delta = pickNewerDelta(fromSp, fromLocal);
-  const merged = applyDelta(baseline, delta);
-  const localPersons = loadLS<CrmPerson[] | null>(LS_PERSONS, null);
-  if (localPersons?.length) {
-    merged.persons = overlayLocalAttachments(merged.persons, localPersons);
+  try {
+    const [persons, companies] = await Promise.all([
+      sp.loadCrmPersons(),
+      sp.loadCrmCompanies(),
+    ]);
+
+    if (persons.length === 0 && companies.length === 0) {
+      // First run — seed SP lists from bundled static data
+      const baseline = cloneStaticCrm();
+      try {
+        await Promise.all([
+          sp.syncCrmPersons(baseline.persons),
+          sp.syncCrmCompanies(baseline.companies),
+        ]);
+      } catch { /* seed failed — use static in-memory */ }
+      return baseline;
+    }
+
+    // Overlay attachments that are kept in browser storage only
+    const local = loadLS<CrmPerson[] | null>(LS_PERSONS, null);
+    const merged = local?.length ? overlayLocalAttachments(persons, local) : persons;
+    try {
+      localStorage.setItem(LS_PERSONS, JSON.stringify(merged));
+      localStorage.setItem(LS_COMPANIES, JSON.stringify(companies));
+    } catch { /* ignore */ }
+    return { persons: merged, companies };
+  } catch {
+    // SP unavailable — fall back to local cache, then static
+    const cachedP = loadLS<CrmPerson[] | null>(LS_PERSONS, null);
+    const cachedC = loadLS<CrmCompany[] | null>(LS_COMPANIES, null);
+    if (cachedP || cachedC) {
+      return { persons: cachedP ?? [], companies: cachedC ?? [] };
+    }
+    return cloneStaticCrm();
   }
-  return merged;
 }
 
-export async function loadCrmDelta(sp: SharePointService): Promise<CrmDelta | null> {
-  return pickNewerDelta(await loadDeltaFromSp(sp), loadDeltaLocal());
+/** Returns a stub CrmDelta to satisfy CrmBoard's revision-tracking API. */
+export async function loadCrmDelta(_sp: SharePointService): Promise<CrmDelta | null> {
+  return {
+    revision: 1,
+    updatedAt: new Date().toISOString(),
+    persons: {},
+    companies: {},
+    deletedPersonIds: [],
+    deletedCompanyIds: [],
+  };
 }
 
-/** Save only changed records — one small JSON blob per edited person/company. */
 export async function saveCrmPersonsCompanies(
   sp: SharePointService,
   persons: CrmPerson[],
   companies: CrmCompany[],
-  prevRevision = 0,
+  _prevRevision = 0,
 ): Promise<{ ok: boolean; revision: number }> {
-  const baseline = cloneStaticCrm();
-  const current = { persons, companies };
-  const delta = computeDelta(baseline, current);
-  delta.revision = prevRevision + 1;
-  delta.updatedAt = new Date().toISOString();
-
   try {
     localStorage.setItem(LS_PERSONS, JSON.stringify(persons));
     localStorage.setItem(LS_COMPANIES, JSON.stringify(companies));
-    localStorage.setItem(LS_DELTA, JSON.stringify(delta));
   } catch { /* ignore */ }
 
   try {
-    await saveDeltaToSp(sp, delta);
-    return { ok: true, revision: delta.revision };
+    await Promise.all([
+      sp.syncCrmPersons(persons),
+      sp.syncCrmCompanies(companies),
+    ]);
+    return { ok: true, revision: Date.now() };
   } catch {
-    return { ok: false, revision: delta.revision };
+    return { ok: false, revision: 0 };
   }
 }
 
-/** Union remote + local; local wins on same id (handles stale empty SharePoint reads). */
-function mergeListById<T extends { id: string }>(remote: T[], local: T[]): T[] {
-  const map = new Map<string, T>();
-  remote.forEach(x => map.set(x.id, x));
-  local.forEach(x => map.set(x.id, x));
-  return Array.from(map.values());
+// ── RFQs ───────────────────────────────────────────────────────────────────
+
+export async function loadRfqsRemote(sp: SharePointService): Promise<CrmRfq[] | null> {
+  try {
+    const rows = await sp.loadCrmRfqs();
+    return rows.map(r => normalizeCrmRfq(r as CrmRfq & Record<string, unknown>));
+  } catch { return null; }
 }
 
 export async function loadRfqsFromSharePoint(sp: SharePointService): Promise<CrmRfq[]> {
-  const local = loadLS<CrmRfq[]>(LS_RFQS, []);
   try {
-    const json = await sp.getSettingChunks(CRM_SP_RFQS);
-    if (!json) return local;
-    const remote = JSON.parse(json) as CrmRfq[];
-    return mergeListById(remote, local);
+    const rfqs = (await sp.loadCrmRfqs()).map(
+      r => normalizeCrmRfq(r as CrmRfq & Record<string, unknown>),
+    );
+    try { localStorage.setItem(LS_RFQS, JSON.stringify(rfqs)); } catch { /* ignore */ }
+    return rfqs;
   } catch {
-    return local;
+    return loadLS<CrmRfq[]>(LS_RFQS, []).map(
+      r => normalizeCrmRfq(r as CrmRfq & Record<string, unknown>),
+    );
   }
 }
 
 export async function saveRfqsToSharePoint(sp: SharePointService, rfqs: CrmRfq[]): Promise<void> {
+  try { localStorage.setItem(LS_RFQS, JSON.stringify(rfqs)); } catch { /* ignore */ }
+  try { await sp.syncCrmRfqs(rfqs); } catch { /* ignore */ }
+}
+
+// ── Quotes ─────────────────────────────────────────────────────────────────
+
+export async function loadQuotesRemote(sp: SharePointService): Promise<CrmQuote[] | null> {
   try {
-    localStorage.setItem(LS_RFQS, JSON.stringify(rfqs));
-  } catch { /* ignore */ }
-  try {
-    await sp.setSettingChunks(CRM_SP_RFQS, JSON.stringify(rfqs));
-  } catch { /* ignore */ }
+    const rows = await sp.loadCrmQuotes();
+    return rows.map(q => normalizeCrmQuote(q as CrmQuote & Record<string, unknown>));
+  } catch { return null; }
 }
 
 export async function loadQuotesFromSharePoint(sp: SharePointService): Promise<CrmQuote[]> {
-  const local = loadLS<CrmQuote[]>(LS_QUOTES, []);
   try {
-    const json = await sp.getSettingChunks(CRM_SP_QUOTES);
-    if (!json) return local;
-    const remote = JSON.parse(json) as CrmQuote[];
-    return mergeListById(remote, local);
+    const quotes = (await sp.loadCrmQuotes()).map(
+      q => normalizeCrmQuote(q as CrmQuote & Record<string, unknown>),
+    );
+    try { localStorage.setItem(LS_QUOTES, JSON.stringify(quotes)); } catch { /* ignore */ }
+    return quotes;
   } catch {
-    return local;
+    return loadLS<CrmQuote[]>(LS_QUOTES, []).map(
+      q => normalizeCrmQuote(q as CrmQuote & Record<string, unknown>),
+    );
   }
 }
 
 export async function saveQuotesToSharePoint(sp: SharePointService, quotes: CrmQuote[]): Promise<void> {
-  try {
-    localStorage.setItem(LS_QUOTES, JSON.stringify(quotes));
-  } catch { /* ignore */ }
-  try {
-    await sp.setSettingChunks(CRM_SP_QUOTES, JSON.stringify(quotes));
-  } catch { /* ignore */ }
+  try { localStorage.setItem(LS_QUOTES, JSON.stringify(quotes)); } catch { /* ignore */ }
+  try { await sp.syncCrmQuotes(quotes); } catch { /* ignore */ }
 }
 
+// ── WIP Projects ───────────────────────────────────────────────────────────
+
 export async function loadProjectsFromSharePoint(sp: SharePointService): Promise<CrmProject[]> {
-  const local = loadLS<CrmProject[]>(LS_PROJECTS, []);
   try {
-    const json = await sp.getSettingChunks(CRM_SP_PROJECTS);
-    if (!json) return local;
-    const remote = JSON.parse(json) as CrmProject[];
-    return mergeListById(remote, local);
+    const projects = await sp.loadCrmWip();
+    try { localStorage.setItem(LS_PROJECTS, JSON.stringify(projects)); } catch { /* ignore */ }
+    return projects;
   } catch {
-    return local;
+    return loadLS<CrmProject[]>(LS_PROJECTS, []);
   }
 }
 
 export async function saveProjectsToSharePoint(sp: SharePointService, projects: CrmProject[]): Promise<void> {
-  try {
-    localStorage.setItem(LS_PROJECTS, JSON.stringify(projects));
-  } catch { /* ignore */ }
-  try {
-    await sp.setSettingChunks(CRM_SP_PROJECTS, JSON.stringify(projects));
-  } catch { /* ignore */ }
+  try { localStorage.setItem(LS_PROJECTS, JSON.stringify(projects)); } catch { /* ignore */ }
+  try { await sp.syncCrmWip(projects); } catch { /* ignore */ }
 }
+
+// ── Quote Budget ───────────────────────────────────────────────────────────
 
 const defaultQuoteBudget = (): CrmQuoteBudget => ({
   year: new Date().getFullYear(),
@@ -355,10 +233,43 @@ export async function loadQuoteBudget(sp: SharePointService): Promise<CrmQuoteBu
 }
 
 export async function saveQuoteBudget(sp: SharePointService, budget: CrmQuoteBudget): Promise<void> {
-  try {
-    localStorage.setItem(LS_QUOTE_BUDGET, JSON.stringify(budget));
-  } catch { /* ignore */ }
-  try {
-    await sp.setSettingChunks(CRM_SP_QUOTE_BUDGET, JSON.stringify(budget));
-  } catch { /* ignore */ }
+  try { localStorage.setItem(LS_QUOTE_BUDGET, JSON.stringify(budget)); } catch { /* ignore */ }
+  try { await sp.setSettingChunks(CRM_SP_QUOTE_BUDGET, JSON.stringify(budget)); } catch { /* ignore */ }
 }
+
+// ── Per-action SP operations (fast path — no bulk sync) ────────────────────
+
+export async function upsertRfqToSharePoint(sp: SharePointService, rfq: CrmRfq): Promise<CrmRfq> {
+  try {
+    if (rfq.spId) { await sp.updateCrmRfq(rfq.spId, rfq); return rfq; }
+    const spId = await sp.addCrmRfq(rfq);
+    return { ...rfq, spId };
+  } catch { return rfq; }
+}
+
+export async function deleteRfqFromSharePoint(sp: SharePointService, rfq: Pick<CrmRfq, 'id' | 'spId'>): Promise<void> {
+  if (!rfq.spId) return;
+  try { await sp.deleteCrmRfqById(rfq.spId); } catch { /* ignore */ }
+}
+
+export async function upsertQuoteToSharePoint(sp: SharePointService, quote: CrmQuote): Promise<CrmQuote> {
+  try {
+    if (quote.spId) { await sp.updateCrmQuote(quote.spId, quote); return quote; }
+    const spId = await sp.addCrmQuote(quote);
+    return { ...quote, spId };
+  } catch { return quote; }
+}
+
+export async function deleteQuoteFromSharePoint(sp: SharePointService, quote: Pick<CrmQuote, 'id' | 'spId'>): Promise<void> {
+  if (!quote.spId) return;
+  try { await sp.deleteCrmQuoteById(quote.spId); } catch { /* ignore */ }
+}
+
+export async function upsertWipToSharePoint(sp: SharePointService, project: CrmProject): Promise<CrmProject> {
+  try {
+    if (project.spId) { await sp.updateCrmWipItem(project.spId, project); return project; }
+    const spId = await sp.addCrmWipItem(project);
+    return { ...project, spId };
+  } catch { return project; }
+}
+

@@ -1114,6 +1114,9 @@ const CrmBoard: React.FC<CrmBoardProps> = ({ spService }) => {
     setSyncState('loading');
     void (async () => {
       try {
+        // Ensure all 5 CRM lists exist (creates them if missing — idempotent).
+        // Runs as best-effort: a permissions failure here must not prevent data loading.
+        try { await spService.ensureAllCrmLists(); } catch { /* requires site owner — ignored */ }
         const [data, delta] = await Promise.all([
           loadCrmPersonsCompanies(spService),
           loadCrmDelta(spService),
@@ -1145,7 +1148,7 @@ const CrmBoard: React.FC<CrmBoardProps> = ({ spService }) => {
     }
     lastSaveAtRef.current = Date.now();
     setSyncState('idle');
-    setSpSyncNote(ok ? '' : 'Saved in this browser only — SharePoint sync failed. Check Contribute access on 3Edge_Settings.');
+    setSpSyncNote(ok ? '' : 'Saved in this browser only — SharePoint sync failed. Check Contribute access on 3Edge_CRM_Persons / 3Edge_CRM_Companies.');
   }, [spService]);
 
   React.useEffect(() => {

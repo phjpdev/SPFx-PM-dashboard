@@ -2,16 +2,19 @@ import * as React from 'react';
 import { getQuoteAttachments, setQuoteAttachments } from './crmAttachmentStore';
 import { DocumentUploadSection } from './crmDocumentUpload';
 import {
-  loadProjectsFromSharePoint, loadQuoteBudget, loadQuotesFromSharePoint,
-  saveProjectsToSharePoint, saveQuoteBudget, saveQuotesToSharePoint,
+  loadProjectsFromSharePoint, loadQuoteBudget, loadQuotesFromSharePoint, loadQuotesRemote,
+  saveQuoteBudget,
+  upsertQuoteToSharePoint, deleteQuoteFromSharePoint, upsertWipToSharePoint,
   type CrmQuoteBudget,
 } from './crmStorage';
+import { normalizeCrmQuote } from './crmRfqNormalize';
 import { nextProjNum, quoteToCrmProject, quoteToIProject } from './crmProjectHelpers';
 import type { SharePointService } from '../../../shared/services/SharePointService';
 import type { CrmAttachment, CrmPerson, CrmCompany, CrmProject, CrmQuote, CrmQuoteStatus, CrmLostReason, CrmRfqDiscipline } from './crmTypes';
 
 const FF = 'Montserrat,sans-serif';
 const LS_QUOTES = '3edge-crm-quotes';
+const LS_PROJECTS = '3edge-crm-projects';
 
 const C = {
   bg: '#f7f8fa', surface: '#ffffff', border: '#e2e5ea', borderMd: '#cdd1d9',
@@ -79,30 +82,8 @@ const loadQuotesLocal = (): CrmQuote[] => {
   } catch { return []; }
 };
 
-const normalizeQuote = (q: CrmQuote): CrmQuote => {
-  let status: CrmQuoteStatus = q.status;
-  const raw = q.status as string;
-  if (raw === 'Accepted') status = 'Draft';
-  if (raw === 'Declined') status = 'Lost';
-  if (!QUOTE_STATUSES.includes(status)) status = 'Draft';
-  return {
-    ...q,
-    approximateHours: typeof q.approximateHours === 'number' ? q.approximateHours : 0,
-    rfiAllowed: typeof q.rfiAllowed === 'number' ? q.rfiAllowed : 0,
-    engineerDrawingReceived: !!q.engineerDrawingReceived,
-    engineerDrawingDate: q.engineerDrawingDate || '',
-    revisionVersionEng: q.revisionVersionEng || '',
-    architectDrawingReceived: !!q.architectDrawingReceived,
-    architectDrawingDate: q.architectDrawingDate || '',
-    revisionVersionArch: q.revisionVersionArch || '',
-    quoteRequiredBy: q.quoteRequiredBy || '',
-    relatedRfqId: q.relatedRfqId || '',
-    lostReason: q.lostReason || '',
-    createQuoteXero: !!q.createQuoteXero,
-    companyAddress: q.companyAddress || '',
-    status,
-  };
-};
+const normalizeQuote = (q: CrmQuote): CrmQuote =>
+  normalizeCrmQuote(q as CrmQuote & Record<string, unknown>);
 
 const disciplineBadgeStyle = (d: 'Steel' | 'Concrete'): React.CSSProperties => ({
   display: 'inline-block', padding: '1px 6px', borderRadius: 3, fontSize: 9, fontWeight: 700,
@@ -172,6 +153,48 @@ const DrawingReceivedField: React.FC<{
   </div>
 );
 
+const LostReasonModal: React.FC<{
+  quote: CrmQuote;
+  onConfirm: (reason: CrmLostReason) => void;
+  onClose: () => void;
+}> = ({ quote, onConfirm, onClose }) => {
+  const [reason, setReason] = React.useState<CrmLostReason | ''>('');
+  return (
+    <div style={{ position: 'fixed', inset: 0, background: 'rgba(0,0,0,.45)', zIndex: 1001, display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
+      <div style={{ background: C.surface, borderRadius: 8, width: 440, boxShadow: '0 12px 40px rgba(0,0,0,.18)', border: `1px solid ${C.border}` }}>
+        <div style={{ padding: '14px 20px', borderBottom: `1px solid ${C.border}`, background: C.thBg }}>
+          <span style={{ fontFamily: FF, fontWeight: 700, fontSize: 14, color: C.text }}>Mark as Lost</span>
+        </div>
+        <div style={{ padding: '20px 22px' }}>
+          <p style={{ fontFamily: FF, fontSize: 12, color: C.sub, margin: '0 0 14px 0', lineHeight: 1.5 }}>
+            Mark <strong style={{ color: '#0d9488' }}>{quote.rfqNum}</strong>
+            {quote.projectTitle ? ` — ${quote.projectTitle}` : ''} as lost.
+          </p>
+          <label style={ml}>Reason lost</label>
+          <select
+            value={reason}
+            onChange={e => setReason(e.target.value as CrmLostReason)}
+            style={mi}
+          >
+            <option value="">— Select reason —</option>
+            {LOST_REASONS.map(r => <option key={r} value={r}>{r}</option>)}
+          </select>
+        </div>
+        <div style={{ display: 'flex', gap: 10, justifyContent: 'flex-end', padding: '14px 22px', borderTop: `1px solid ${C.border}` }}>
+          <button onClick={onClose} style={{ padding: '8px 20px', borderRadius: 4, border: `1px solid ${C.borderMd}`, background: 'transparent', color: C.sub, fontFamily: FF, fontSize: 12, cursor: 'pointer' }}>Cancel</button>
+          <button
+            onClick={() => { if (reason) onConfirm(reason); }}
+            disabled={!reason}
+            style={{ padding: '8px 20px', borderRadius: 4, border: 'none', background: reason ? C.red : C.borderMd, color: '#fff', fontFamily: FF, fontWeight: 700, fontSize: 12, cursor: reason ? 'pointer' : 'default' }}
+          >
+            Mark Lost
+          </button>
+        </div>
+      </div>
+    </div>
+  );
+};
+
 const QuoteModal: React.FC<{
   initial: CrmQuote;
   persons: CrmPerson[];
@@ -181,6 +204,7 @@ const QuoteModal: React.FC<{
 }> = ({ initial, persons, companies, onSave, onClose }) => {
   const [d, setD] = React.useState<CrmQuote>(() => ({ ...initial, quoteNum: ensureQuPrefix(initial.quoteNum) }));
   const [attachments, setAttachments] = React.useState<CrmAttachment[]>(() => getQuoteAttachments(initial.id));
+  const [awaitingLostReason, setAwaitingLostReason] = React.useState<CrmQuote | null>(null);
   const set = <K extends keyof CrmQuote>(k: K, v: CrmQuote[K]): void => setD(p => ({ ...p, [k]: v }));
   const grid2: React.CSSProperties = { display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '14px 18px' };
 
@@ -323,6 +347,17 @@ const QuoteModal: React.FC<{
                 {QUOTE_STATUSES.map(s => <option key={s} value={s}>{s}</option>)}
               </select>
             </div>
+            <div>
+              {initial.status === 'Lost' && (
+                <>
+                  <label style={ml}>Lost Reason</label>
+                  <select value={d.lostReason || ''} onChange={e => set('lostReason', e.target.value)} style={mi}>
+                    <option value="">— Select reason —</option>
+                    {LOST_REASONS.map(r => <option key={r} value={r}>{r}</option>)}
+                  </select>
+                </>
+              )}
+            </div>
           </div>
           <div style={{ marginTop: 14, marginBottom: 14 }}>
             <label style={{ display: 'flex', alignItems: 'center', gap: 8, fontFamily: FF, fontSize: 12, color: C.text, cursor: 'pointer' }}>
@@ -358,8 +393,13 @@ const QuoteModal: React.FC<{
           <button
             onClick={() => {
               if (canSave) {
+                const prepared: CrmQuote = { ...d, quoteNum: quoteNumFilled(d.quoteNum) ? d.quoteNum.trim() : '' };
+                if (prepared.status === 'Lost' && !prepared.lostReason) {
+                  setAwaitingLostReason(prepared);
+                  return;
+                }
                 setQuoteAttachments(d.id, attachments);
-                onSave({ ...d, quoteNum: quoteNumFilled(d.quoteNum) ? d.quoteNum.trim() : '' });
+                onSave(prepared);
               }
             }}
             style={{ padding: '8px 20px', borderRadius: 4, border: 'none', background: canSave ? C.green : C.borderMd, color: '#fff', fontFamily: FF, fontWeight: 700, fontSize: 12, cursor: canSave ? 'pointer' : 'default' }}
@@ -368,6 +408,17 @@ const QuoteModal: React.FC<{
           </button>
         </div>
       </div>
+      {awaitingLostReason && (
+        <LostReasonModal
+          quote={awaitingLostReason}
+          onConfirm={reason => {
+            setAwaitingLostReason(null);
+            setQuoteAttachments(awaitingLostReason.id, attachments);
+            onSave({ ...awaitingLostReason, lostReason: reason });
+          }}
+          onClose={() => setAwaitingLostReason(null)}
+        />
+      )}
     </div>
   );
 };
@@ -422,48 +473,6 @@ const BudgetKpiCard: React.FC<{
   </div>
 );
 
-const LostReasonModal: React.FC<{
-  quote: CrmQuote;
-  onConfirm: (reason: CrmLostReason) => void;
-  onClose: () => void;
-}> = ({ quote, onConfirm, onClose }) => {
-  const [reason, setReason] = React.useState<CrmLostReason | ''>('');
-  return (
-    <div style={{ position: 'fixed', inset: 0, background: 'rgba(0,0,0,.45)', zIndex: 1001, display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
-      <div style={{ background: C.surface, borderRadius: 8, width: 440, boxShadow: '0 12px 40px rgba(0,0,0,.18)', border: `1px solid ${C.border}` }}>
-        <div style={{ padding: '14px 20px', borderBottom: `1px solid ${C.border}`, background: C.thBg }}>
-          <span style={{ fontFamily: FF, fontWeight: 700, fontSize: 14, color: C.text }}>Mark as Lost</span>
-        </div>
-        <div style={{ padding: '20px 22px' }}>
-          <p style={{ fontFamily: FF, fontSize: 12, color: C.sub, margin: '0 0 14px 0', lineHeight: 1.5 }}>
-            Mark <strong style={{ color: '#0d9488' }}>{quote.rfqNum}</strong>
-            {quote.projectTitle ? ` — ${quote.projectTitle}` : ''} as lost.
-          </p>
-          <label style={ml}>Reason lost</label>
-          <select
-            value={reason}
-            onChange={e => setReason(e.target.value as CrmLostReason)}
-            style={mi}
-          >
-            <option value="">— Select reason —</option>
-            {LOST_REASONS.map(r => <option key={r} value={r}>{r}</option>)}
-          </select>
-        </div>
-        <div style={{ display: 'flex', gap: 10, justifyContent: 'flex-end', padding: '14px 22px', borderTop: `1px solid ${C.border}` }}>
-          <button onClick={onClose} style={{ padding: '8px 20px', borderRadius: 4, border: `1px solid ${C.borderMd}`, background: 'transparent', color: C.sub, fontFamily: FF, fontSize: 12, cursor: 'pointer' }}>Cancel</button>
-          <button
-            onClick={() => { if (reason) onConfirm(reason); }}
-            disabled={!reason}
-            style={{ padding: '8px 20px', borderRadius: 4, border: 'none', background: reason ? C.red : C.borderMd, color: '#fff', fontFamily: FF, fontWeight: 700, fontSize: 12, cursor: reason ? 'pointer' : 'default' }}
-          >
-            Mark Lost
-          </button>
-        </div>
-      </div>
-    </div>
-  );
-};
-
 const BudgetEditModal: React.FC<{
   budget: CrmQuoteBudget;
   onSave: (b: CrmQuoteBudget) => void;
@@ -514,14 +523,17 @@ const CrmQuotesTab: React.FC<{
   const [lostQuote, setLostQuote] = React.useState<CrmQuote | null>(null);
   const quotesRef = React.useRef(quotes);
   quotesRef.current = quotes;
-  const saveTimerRef = React.useRef<ReturnType<typeof setTimeout> | null>(null);
-
   const reload = React.useCallback(async (): Promise<void> => {
     try {
-      const data = (await loadQuotesFromSharePoint(spService)).map(normalizeQuote);
-      const remoteStr = JSON.stringify(data);
-      const localStr = JSON.stringify(quotesRef.current);
-      if (remoteStr !== localStr) setQuotes(data);
+      const remote = await loadQuotesRemote(spService);
+      if (remote !== null) {
+        const next = remote.map(normalizeQuote);
+        if (JSON.stringify(next) !== JSON.stringify(quotesRef.current)) {
+          quotesRef.current = next;
+          setQuotes(next);
+          try { localStorage.setItem(LS_QUOTES, JSON.stringify(next)); } catch { /* ignore */ }
+        }
+      }
       const projs = await loadProjectsFromSharePoint(spService);
       const yr = new Date().getFullYear();
       setWonProjects(projs.filter(p => p.wonDate.startsWith(String(yr))));
@@ -571,20 +583,13 @@ const CrmQuotesTab: React.FC<{
   React.useEffect(() => {
     if (!ready) return;
     const iv = setInterval(() => { void reload(); }, 12000);
-    return () => clearInterval(iv);
-  }, [ready, reload]);
-
-  React.useEffect(() => {
-    if (!ready) return;
-    localStorage.setItem(LS_QUOTES, JSON.stringify(quotes));
-    if (saveTimerRef.current) clearTimeout(saveTimerRef.current);
-    saveTimerRef.current = setTimeout(() => {
-      void saveQuotesToSharePoint(spService, quotesRef.current).catch(() => undefined);
-    }, 2000);
+    const onFocus = (): void => { void reload(); };
+    window.addEventListener('focus', onFocus);
     return () => {
-      if (saveTimerRef.current) clearTimeout(saveTimerRef.current);
+      clearInterval(iv);
+      window.removeEventListener('focus', onFocus);
     };
-  }, [quotes, ready, spService]);
+  }, [ready, reload]);
 
   const companyName = (id: string): string => companies.find(c => c.id === id)?.name || '—';
   const personName = (id: string): string => persons.find(p => p.id === id)?.name || '—';
@@ -633,10 +638,33 @@ const CrmQuotesTab: React.FC<{
   });
 
   const persistQuotes = (next: CrmQuote[]): void => {
+    const prev = quotesRef.current;
     quotesRef.current = next;
     setQuotes(next);
-    if (saveTimerRef.current) clearTimeout(saveTimerRef.current);
-    void saveQuotesToSharePoint(spService, next).catch(() => undefined);
+    try { localStorage.setItem(LS_QUOTES, JSON.stringify(next)); } catch { /* ignore */ }
+
+    const prevMap = new Map(prev.map(q => [q.id, q]));
+    const nextMap = new Map(next.map(q => [q.id, q]));
+
+    for (const q of next) {
+      const p = prevMap.get(q.id);
+      if (!p || JSON.stringify(p) !== JSON.stringify(q)) {
+        void upsertQuoteToSharePoint(spService, q).then(withSpId => {
+          if (withSpId.spId !== q.spId) {
+            setQuotes(cur => {
+              const updated = cur.map(x => x.id === withSpId.id ? { ...x, spId: withSpId.spId } : x);
+              quotesRef.current = updated;
+              try { localStorage.setItem(LS_QUOTES, JSON.stringify(updated)); } catch { /* ignore */ }
+              return updated;
+            });
+          }
+        }).catch(() => undefined);
+      }
+    }
+
+    for (const q of prev) {
+      if (!nextMap.has(q.id)) void deleteQuoteFromSharePoint(spService, q).catch(() => undefined);
+    }
   };
 
   const saveQuote = (item: CrmQuote): void => {
@@ -670,7 +698,8 @@ const CrmQuotesTab: React.FC<{
         const nextProjects = [...crmProjects, crmProject];
         const nextQuotes = quotesRef.current.filter(q => q.id !== item.id);
         persistQuotes(nextQuotes);
-        await saveProjectsToSharePoint(spService, nextProjects);
+        try { localStorage.setItem(LS_PROJECTS, JSON.stringify(nextProjects)); } catch { /* ignore */ }
+        void upsertWipToSharePoint(spService, crmProject).catch(() => undefined);
         const yr = new Date().getFullYear();
         setWonProjects(nextProjects.filter(p => p.wonDate.startsWith(String(yr))));
         onQuoteWon?.(nextProjects, nextQuotes);
