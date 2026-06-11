@@ -1,17 +1,39 @@
 import { SPHttpClient } from '@microsoft/sp-http';
 import { IProject, IRfi } from '../models/IProject';
 import { ITask, ITeamMember, ITaskHistory } from '../models/ITask';
+import type {
+  CrmPerson, CrmCompany, CrmRfq, CrmQuote, CrmProject as CrmWip, CrmEnquiryCore, CrmQuoteStatus,
+} from '../models/ICrm';
 
 const LIST_PROJ = '3Edge_Projects';
 const LIST_RFI = '3Edge_RFIs';
 const LIST_TASKS = 'WeeklyTasks';
 const LIST_TEAM = 'TeamMembers';
 const LIST_SETTINGS = '3Edge_Settings';
+/** CRM enquiry rows — one SharePoint item per RFQ / quote / WIP record. */
+export const LIST_CRM_RFQS = '3Edge_CRM_RFQs';
+export const LIST_CRM_QUOTES = '3Edge_CRM_Quotes';
+export const LIST_CRM_WIP = '3Edge_CRM_WIP';
 const SITE_DATA_FOLDER = '3EdgeDashboardData';
 /** Multiline Note field limit in SharePoint lists. */
 const SETTING_CHUNK_SIZE = 60000;
 /** Safe chunk size when Value is single-line text (~255 chars). */
 const SETTING_CHUNK_SIZE_SAFE = 200;
+
+export interface CrmListRow {
+  spId: number;
+  crmId: string;
+  recordNum: string;
+  payloadJson: string;
+}
+
+export interface CrmListRowInput {
+  spId?: number;
+  crmId: string;
+  title: string;
+  recordNum: string;
+  payloadJson: string;
+}
 
 export class SharePointService {
   private _siteUrl: string;
@@ -476,6 +498,18 @@ export class SharePointService {
     return s.replace(/'/g, "''");
   }
 
+  /** Keep one record per id, preferring the highest spId (most recently created). */
+  private static dedupeById<T extends { id: string; spId?: number }>(items: T[]): T[] {
+    const seen = new Map<string, T>();
+    for (const item of items) {
+      const prev = seen.get(item.id);
+      if (!prev || (item.spId ?? 0) > (prev.spId ?? 0)) seen.set(item.id, item);
+    }
+    const result: T[] = [];
+    seen.forEach(v => result.push(v));
+    return result;
+  }
+
   /** Server-relative path for OData GetFileByServerRelativeUrl / GetFolderByServerRelativeUrl. */
   private static oDataPath(path: string): string {
     return SharePointService.oDataStr(path);
@@ -488,6 +522,27 @@ export class SharePointService {
       const items = d.value || [];
       return items.length > 0 ? (items[0].Value || '') : undefined;
     } catch { return undefined; }
+  }
+
+  /** All rows from 3Edge_Settings (client-side filter — OData startswith is unreliable on some tenants). */
+  public async listAllSettings(): Promise<Array<{ title: string; value: string }>> {
+    try {
+      const d = await this.spGet(
+        `/_api/web/lists/getbytitle('${LIST_SETTINGS}')/items?$select=Title,Value&$top=5000`,
+      );
+      const items = (d.value || []) as Array<{ Title?: string; Value?: string }>;
+      return items
+        .filter(x => x.Title)
+        .map(x => ({ title: x.Title as string, value: x.Value || '' }));
+    } catch {
+      return [];
+    }
+  }
+
+  /** List settings rows whose Title starts with prefix (e.g. crm_rfqs_). */
+  public async listSettingsByTitlePrefix(prefix: string): Promise<Array<{ title: string; value: string }>> {
+    const all = await this.listAllSettings();
+    return all.filter(x => x.title.startsWith(prefix));
   }
 
   public async setSetting(key: string, value: string): Promise<void> {
@@ -648,5 +703,568 @@ export class SharePointService {
       }
     }
     await this.setSettingChunksLegacy(baseKey, value);
+  }
+
+  // ── CRM lists (one row per RFQ / quote / WIP) ─────────────────
+
+  private async listExists(title: string): Promise<boolean> {
+    try {
+      const t = SharePointService.oDataStr(title);
+      await this.spGet(`/_api/web/lists/getbytitle('${t}')?$select=Id`);
+      return true;
+    } catch {
+      return false;
+    }
+  }
+
+  private async ensureCrmListField(listTitle: string, fieldTitle: string, kind: number): Promise<void> {
+    const t = SharePointService.oDataStr(listTitle);
+    try {
+      await this.spPost(`/_api/web/lists/getbytitle('${t}')/fields`, {
+        FieldTypeKind: kind,
+        Title: fieldTitle,
+      });
+    } catch { /* column may already exist */ }
+  }
+
+  /** Create CRM list + crmId / recordNum / payloadJson columns if missing. */
+  public async ensureCrmList(listTitle: string, description: string): Promise<void> {
+    if (!(await this.listExists(listTitle))) {
+      await this.spPost('/_api/web/lists', {
+        Title: listTitle,
+        BaseTemplate: 100,
+        Description: description,
+      });
+    }
+    await this.ensureCrmListField(listTitle, 'crmId', 2);
+    await this.ensureCrmListField(listTitle, 'recordNum', 2);
+    await this.ensureCrmListField(listTitle, 'payloadJson', 3);
+  }
+
+  public async loadCrmListRows(listTitle: string): Promise<CrmListRow[]> {
+    const t = SharePointService.oDataStr(listTitle);
+    const d = await this.spGet(
+      `/_api/web/lists/getbytitle('${t}')/items?$select=Id,Title,crmId,recordNum,payloadJson&$top=5000&$orderby=recordNum asc`,
+    );
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    return (d.value || []).map((i: any) => ({
+      spId: Number(i.Id),
+      crmId: String(i.crmId || ''),
+      recordNum: String(i.recordNum || i.Title || ''),
+      payloadJson: String(i.payloadJson || ''),
+    }));
+  }
+
+  private crmListItemBody(row: CrmListRowInput): object {
+    return {
+      Title: row.title || row.recordNum || row.crmId,
+      crmId: row.crmId,
+      recordNum: row.recordNum || row.title || '',
+      payloadJson: row.payloadJson,
+    };
+  }
+
+  /** Upsert rows by crmId; delete list items whose crmId is not in rows. */
+  public async syncCrmListRows(listTitle: string, rows: CrmListRowInput[]): Promise<void> {
+    const t = SharePointService.oDataStr(listTitle);
+    const existing = await this.loadCrmListRows(listTitle);
+    const byCrmId = new Map(existing.filter(e => e.crmId).map(e => [e.crmId, e]));
+    const keep = new Set(rows.map(r => r.crmId));
+
+    for (const row of rows) {
+      const body = this.crmListItemBody(row);
+      const prev = byCrmId.get(row.crmId);
+      const spId = row.spId || prev?.spId;
+      if (spId) {
+        await this.spMerge(`/_api/web/lists/getbytitle('${t}')/items(${spId})`, body);
+      } else {
+        await this.spPost(`/_api/web/lists/getbytitle('${t}')/items`, body);
+      }
+    }
+
+    for (const ex of existing) {
+      if (ex.crmId && !keep.has(ex.crmId)) {
+        await this.spDelete(`/_api/web/lists/getbytitle('${t}')/items(${ex.spId})`);
+      }
+    }
+  }
+
+  // ── CRM proper-column lists ────────────────────────────────────────────────
+
+  public static readonly LIST_CRM_PERSONS = '3Edge_CRM_Persons';
+  public static readonly LIST_CRM_COMPANIES = '3Edge_CRM_Companies';
+  // LIST_CRM_RFQS / LIST_CRM_QUOTES / LIST_CRM_WIP already exported above
+
+  private parseJson<T>(v: unknown, fallback: T): T {
+    if (typeof v !== 'string' || !v) return fallback;
+    try { return JSON.parse(v) as T; } catch { return fallback; }
+  }
+
+  // ── Shared enquiry-core helpers ────────────────────────────────────────────
+
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  private mapEnquiryCore(i: any): CrmEnquiryCore {
+    return {
+      dateReceived: this.parseDate(i.dateReceived),
+      quoteRequiredBy: this.parseDate(i.quoteRequiredBy),
+      personId: i.personId || '',
+      organizationId: i.organizationId || '',
+      companyAddress: i.companyAddress || '',
+      projectTitle: i.projectTitle || '',
+      projectAddress: i.projectAddress || '',
+      discipline: i.discipline || 'Steel',
+      projectValue: Number(i.projectValue) || 0,
+      approximateHours: Number(i.approximateHours) || 0,
+      engineerDrawingReceived: !!i.engineerDrawingReceived,
+      engineerDrawingDate: this.parseDate(i.engineerDrawingDate),
+      revisionVersionEng: i.revisionVersionEng || '',
+      architectDrawingReceived: !!i.architectDrawingReceived,
+      architectDrawingDate: this.parseDate(i.architectDrawingDate),
+      revisionVersionArch: i.revisionVersionArch || '',
+      rfiAllowed: Number(i.rfiAllowed) || 0,
+      assignedTo: i.assignedTo || '',
+      source: i.source || '',
+      notes: i.notes || '',
+    };
+  }
+
+  private enquiryCoreBody(d: CrmEnquiryCore): Record<string, unknown> {
+    return {
+      dateReceived: d.dateReceived || null,
+      quoteRequiredBy: d.quoteRequiredBy || null,
+      personId: d.personId || '',
+      organizationId: d.organizationId || '',
+      companyAddress: d.companyAddress || '',
+      projectTitle: d.projectTitle || '',
+      projectAddress: d.projectAddress || '',
+      discipline: d.discipline || '',
+      projectValue: Number(d.projectValue) || 0,
+      approximateHours: Number(d.approximateHours) || 0,
+      engineerDrawingReceived: !!d.engineerDrawingReceived,
+      engineerDrawingDate: d.engineerDrawingDate || null,
+      revisionVersionEng: d.revisionVersionEng || '',
+      architectDrawingReceived: !!d.architectDrawingReceived,
+      architectDrawingDate: d.architectDrawingDate || null,
+      revisionVersionArch: d.revisionVersionArch || '',
+      rfiAllowed: Number(d.rfiAllowed) || 0,
+      assignedTo: d.assignedTo || '',
+      source: d.source || '',
+      notes: d.notes || '',
+    };
+  }
+
+  // ── CRM Persons ────────────────────────────────────────────────────────────
+
+  private personBody(d: CrmPerson): object {
+    return {
+      Title: d.name || '',
+      crmId: d.id || '',
+      organizationId: d.organizationId || '',
+      position: d.position || '',
+      phonesJson: JSON.stringify(d.phones || []),
+      emailsJson: JSON.stringify(d.emails || []),
+      activitiesJson: d.activities?.length ? JSON.stringify(d.activities) : null,
+    };
+  }
+
+  public async loadCrmPersons(): Promise<CrmPerson[]> {
+    const t = SharePointService.oDataStr(SharePointService.LIST_CRM_PERSONS);
+    const d = await this.spGet(
+      `/_api/web/lists/getbytitle('${t}')/items?$select=Id,Title,crmId,organizationId,position,phonesJson,emailsJson,activitiesJson&$top=2000&$orderby=Title asc`,
+    );
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    return (d.value || []).map((i: any) => ({
+      id: String(i.crmId || String(i.Id)),
+      spId: Number(i.Id),
+      name: i.Title || '',
+      organizationId: i.organizationId || '',
+      position: i.position || '',
+      phones: this.parseJson(i.phonesJson, []),
+      emails: this.parseJson(i.emailsJson, []),
+      activities: i.activitiesJson ? this.parseJson<CrmPerson['activities']>(i.activitiesJson, undefined) : undefined,
+    }));
+  }
+
+  public async syncCrmPersons(persons: CrmPerson[]): Promise<CrmPerson[]> {
+    const t = SharePointService.oDataStr(SharePointService.LIST_CRM_PERSONS);
+    const existing = await this.loadCrmPersons();
+    const byId = new Map(existing.map(e => [e.id, e.spId as number]));
+    const keep = new Set(persons.map(p => p.id));
+    const result: CrmPerson[] = [];
+
+    for (const p of persons) {
+      const body = this.personBody(p);
+      const spId = p.spId ?? byId.get(p.id);
+      if (spId) {
+        await this.spMerge(`/_api/web/lists/getbytitle('${t}')/items(${spId})`, body);
+        result.push({ ...p, spId });
+      } else {
+        const r = await this.spPost(`/_api/web/lists/getbytitle('${t}')/items`, body);
+        result.push({ ...p, spId: Number(r.Id) });
+      }
+    }
+
+    for (const e of existing) {
+      if (e.id && !keep.has(e.id) && e.spId) {
+        await this.spDelete(`/_api/web/lists/getbytitle('${t}')/items(${e.spId})`);
+      }
+    }
+
+    return result;
+  }
+
+  // ── CRM Companies ──────────────────────────────────────────────────────────
+
+  private companyBody(d: CrmCompany): object {
+    return {
+      Title: d.name || '',
+      crmId: d.id || '',
+      labels: d.labels || '',
+      address: d.address || '',
+      phonesJson: JSON.stringify(d.phones || []),
+      emailsJson: JSON.stringify(d.emails || []),
+    };
+  }
+
+  public async loadCrmCompanies(): Promise<CrmCompany[]> {
+    const t = SharePointService.oDataStr(SharePointService.LIST_CRM_COMPANIES);
+    const d = await this.spGet(
+      `/_api/web/lists/getbytitle('${t}')/items?$select=Id,Title,crmId,labels,address,phonesJson,emailsJson&$top=2000&$orderby=Title asc`,
+    );
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    return (d.value || []).map((i: any) => ({
+      id: String(i.crmId || String(i.Id)),
+      spId: Number(i.Id),
+      name: i.Title || '',
+      labels: i.labels || '',
+      address: i.address || '',
+      phones: this.parseJson(i.phonesJson, []),
+      emails: this.parseJson(i.emailsJson, []),
+    }));
+  }
+
+  public async syncCrmCompanies(companies: CrmCompany[]): Promise<CrmCompany[]> {
+    const t = SharePointService.oDataStr(SharePointService.LIST_CRM_COMPANIES);
+    const existing = await this.loadCrmCompanies();
+    const byId = new Map(existing.map(e => [e.id, e.spId as number]));
+    const keep = new Set(companies.map(c => c.id));
+    const result: CrmCompany[] = [];
+
+    for (const c of companies) {
+      const body = this.companyBody(c);
+      const spId = c.spId ?? byId.get(c.id);
+      if (spId) {
+        await this.spMerge(`/_api/web/lists/getbytitle('${t}')/items(${spId})`, body);
+        result.push({ ...c, spId });
+      } else {
+        const r = await this.spPost(`/_api/web/lists/getbytitle('${t}')/items`, body);
+        result.push({ ...c, spId: Number(r.Id) });
+      }
+    }
+
+    for (const e of existing) {
+      if (e.id && !keep.has(e.id) && e.spId) {
+        await this.spDelete(`/_api/web/lists/getbytitle('${t}')/items(${e.spId})`);
+      }
+    }
+
+    return result;
+  }
+
+  // ── CRM RFQs ───────────────────────────────────────────────────────────────
+
+  private rfqBody(d: CrmRfq): object {
+    return {
+      Title: d.rfqNum || d.id || '',
+      crmId: d.id || '',
+      rfqNum: d.rfqNum || '',
+      stage: d.stage || 'New Enquiry',
+      createQuoteXero: !!d.createQuoteXero,
+      relatedRfqId: d.relatedRfqId || '',
+      ...this.enquiryCoreBody(d),
+    };
+  }
+
+  public async loadCrmRfqs(): Promise<CrmRfq[]> {
+    const t = SharePointService.oDataStr(LIST_CRM_RFQS);
+    const d = await this.spGet(
+      `/_api/web/lists/getbytitle('${t}')/items?$top=2000&$orderby=rfqNum asc`,
+    );
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    const raw: CrmRfq[] = (d.value || []).map((i: any) => ({
+      ...this.mapEnquiryCore(i),
+      id: String(i.crmId || String(i.Id)),
+      spId: Number(i.Id),
+      rfqNum: i.rfqNum || i.Title || '',
+      stage: i.stage || 'New Enquiry',
+      createQuoteXero: !!i.createQuoteXero,
+      relatedRfqId: i.relatedRfqId || '',
+    }));
+    return SharePointService.dedupeById(raw);
+  }
+
+  public async syncCrmRfqs(rfqs: CrmRfq[]): Promise<CrmRfq[]> {
+    const t = SharePointService.oDataStr(LIST_CRM_RFQS);
+    const existing = await this.loadCrmRfqs();
+    const byId = new Map<string, number>();
+    const extraSpIds: number[] = [];
+    for (const e of existing) {
+      if (!e.id) continue;
+      const prev = byId.get(e.id);
+      if (prev !== undefined) {
+        extraSpIds.push(Math.min(prev, e.spId as number));
+        byId.set(e.id, Math.max(prev, e.spId as number));
+      } else { byId.set(e.id, e.spId as number); }
+    }
+    for (const spId of extraSpIds) {
+      await this.spDelete(`/_api/web/lists/getbytitle('${t}')/items(${spId})`);
+    }
+    const keep = new Set(rfqs.map(r => r.id));
+    const result: CrmRfq[] = [];
+
+    for (const rfq of rfqs) {
+      const body = this.rfqBody(rfq);
+      const spId = rfq.spId ?? byId.get(rfq.id);
+      if (spId) {
+        await this.spMerge(`/_api/web/lists/getbytitle('${t}')/items(${spId})`, body);
+        result.push({ ...rfq, spId });
+      } else {
+        const r = await this.spPost(`/_api/web/lists/getbytitle('${t}')/items`, body);
+        result.push({ ...rfq, spId: Number(r.Id) });
+      }
+    }
+
+    for (const e of existing) {
+      if (e.id && !keep.has(e.id) && e.spId) {
+        await this.spDelete(`/_api/web/lists/getbytitle('${t}')/items(${e.spId})`);
+      }
+    }
+
+    return result;
+  }
+
+  // ── CRM Quotes ─────────────────────────────────────────────────────────────
+
+  private quoteBody(d: CrmQuote): object {
+    return {
+      Title: d.quoteNum || d.id || '',
+      crmId: d.id || '',
+      quoteNum: d.quoteNum || '',
+      rfqId: d.rfqId || '',
+      rfqNum: d.rfqNum || '',
+      quotedDate: d.quotedDate || null,
+      createQuoteXero: !!d.createQuoteXero,
+      relatedRfqId: d.relatedRfqId || '',
+      lostReason: d.lostReason || '',
+      status: d.status || 'Draft',
+      ...this.enquiryCoreBody(d),
+    };
+  }
+
+  public async loadCrmQuotes(): Promise<CrmQuote[]> {
+    const t = SharePointService.oDataStr(LIST_CRM_QUOTES);
+    const d = await this.spGet(
+      `/_api/web/lists/getbytitle('${t}')/items?$top=2000&$orderby=quoteNum asc`,
+    );
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    const raw: CrmQuote[] = (d.value || []).map((i: any) => ({
+      ...this.mapEnquiryCore(i),
+      id: String(i.crmId || String(i.Id)),
+      spId: Number(i.Id),
+      quoteNum: i.quoteNum || i.Title || '',
+      rfqId: i.rfqId || '',
+      rfqNum: i.rfqNum || '',
+      quotedDate: this.parseDate(i.quotedDate),
+      createQuoteXero: !!i.createQuoteXero,
+      relatedRfqId: i.relatedRfqId || '',
+      lostReason: i.lostReason || '',
+      status: (i.status || 'Draft') as CrmQuoteStatus,
+    }));
+    return SharePointService.dedupeById(raw);
+  }
+
+  public async syncCrmQuotes(quotes: CrmQuote[]): Promise<CrmQuote[]> {
+    const t = SharePointService.oDataStr(LIST_CRM_QUOTES);
+    const existing = await this.loadCrmQuotes();
+    const byId = new Map<string, number>();
+    const extraSpIds: number[] = [];
+    for (const e of existing) {
+      if (!e.id) continue;
+      const prev = byId.get(e.id);
+      if (prev !== undefined) {
+        extraSpIds.push(Math.min(prev, e.spId as number));
+        byId.set(e.id, Math.max(prev, e.spId as number));
+      } else { byId.set(e.id, e.spId as number); }
+    }
+    for (const spId of extraSpIds) {
+      await this.spDelete(`/_api/web/lists/getbytitle('${t}')/items(${spId})`);
+    }
+    const keep = new Set(quotes.map(q => q.id));
+    const result: CrmQuote[] = [];
+
+    for (const q of quotes) {
+      const body = this.quoteBody(q);
+      const spId = q.spId ?? byId.get(q.id);
+      if (spId) {
+        await this.spMerge(`/_api/web/lists/getbytitle('${t}')/items(${spId})`, body);
+        result.push({ ...q, spId });
+      } else {
+        const r = await this.spPost(`/_api/web/lists/getbytitle('${t}')/items`, body);
+        result.push({ ...q, spId: Number(r.Id) });
+      }
+    }
+
+    for (const e of existing) {
+      if (e.id && !keep.has(e.id) && e.spId) {
+        await this.spDelete(`/_api/web/lists/getbytitle('${t}')/items(${e.spId})`);
+      }
+    }
+
+    return result;
+  }
+
+  // ── CRM WIP (won projects) ─────────────────────────────────────────────────
+
+  private wipBody(d: CrmWip): object {
+    return {
+      Title: d.projNum || d.id || '',
+      crmId: d.id || '',
+      projNum: d.projNum || '',
+      quoteId: d.quoteId || '',
+      quoteNum: d.quoteNum || '',
+      rfqId: d.rfqId || '',
+      rfqNum: d.rfqNum || '',
+      wonDate: d.wonDate || null,
+      ...this.enquiryCoreBody(d),
+    };
+  }
+
+  public async loadCrmWip(): Promise<CrmWip[]> {
+    const t = SharePointService.oDataStr(LIST_CRM_WIP);
+    const d = await this.spGet(
+      `/_api/web/lists/getbytitle('${t}')/items?$top=2000&$orderby=projNum asc`,
+    );
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    return (d.value || []).map((i: any) => ({
+      ...this.mapEnquiryCore(i),
+      id: String(i.crmId || String(i.Id)),
+      spId: Number(i.Id),
+      projNum: i.projNum || i.Title || '',
+      quoteId: i.quoteId || '',
+      quoteNum: i.quoteNum || '',
+      rfqId: i.rfqId || '',
+      rfqNum: i.rfqNum || '',
+      wonDate: this.parseDate(i.wonDate),
+    }));
+  }
+
+  public async syncCrmWip(projects: CrmWip[]): Promise<CrmWip[]> {
+    const t = SharePointService.oDataStr(LIST_CRM_WIP);
+    const existing = await this.loadCrmWip();
+    const byId = new Map(existing.map(e => [e.id, e.spId as number]));
+    const keep = new Set(projects.map(p => p.id));
+    const result: CrmWip[] = [];
+
+    for (const p of projects) {
+      const body = this.wipBody(p);
+      const spId = p.spId ?? byId.get(p.id);
+      if (spId) {
+        await this.spMerge(`/_api/web/lists/getbytitle('${t}')/items(${spId})`, body);
+        result.push({ ...p, spId });
+      } else {
+        const r = await this.spPost(`/_api/web/lists/getbytitle('${t}')/items`, body);
+        result.push({ ...p, spId: Number(r.Id) });
+      }
+    }
+
+    for (const e of existing) {
+      if (e.id && !keep.has(e.id) && e.spId) {
+        await this.spDelete(`/_api/web/lists/getbytitle('${t}')/items(${e.spId})`);
+      }
+    }
+
+    return result;
+  }
+
+  // ── Individual CRUD (fast path — no bulk load) ─────────────────────────────
+
+  public async addCrmRfq(rfq: CrmRfq): Promise<number> {
+    const t = SharePointService.oDataStr(LIST_CRM_RFQS);
+    const r = await this.spPost(`/_api/web/lists/getbytitle('${t}')/items`, this.rfqBody(rfq));
+    return Number(r.Id);
+  }
+  public async updateCrmRfq(spId: number, rfq: CrmRfq): Promise<void> {
+    const t = SharePointService.oDataStr(LIST_CRM_RFQS);
+    await this.spMerge(`/_api/web/lists/getbytitle('${t}')/items(${spId})`, this.rfqBody(rfq));
+  }
+  public async deleteCrmRfqById(spId: number): Promise<void> {
+    await this.spDelete(`/_api/web/lists/getbytitle('${SharePointService.oDataStr(LIST_CRM_RFQS)}')/items(${spId})`);
+  }
+
+  public async addCrmQuote(quote: CrmQuote): Promise<number> {
+    const t = SharePointService.oDataStr(LIST_CRM_QUOTES);
+    const r = await this.spPost(`/_api/web/lists/getbytitle('${t}')/items`, this.quoteBody(quote));
+    return Number(r.Id);
+  }
+  public async updateCrmQuote(spId: number, quote: CrmQuote): Promise<void> {
+    const t = SharePointService.oDataStr(LIST_CRM_QUOTES);
+    await this.spMerge(`/_api/web/lists/getbytitle('${t}')/items(${spId})`, this.quoteBody(quote));
+  }
+  public async deleteCrmQuoteById(spId: number): Promise<void> {
+    await this.spDelete(`/_api/web/lists/getbytitle('${SharePointService.oDataStr(LIST_CRM_QUOTES)}')/items(${spId})`);
+  }
+
+  public async addCrmWipItem(project: CrmWip): Promise<number> {
+    const t = SharePointService.oDataStr(LIST_CRM_WIP);
+    const r = await this.spPost(`/_api/web/lists/getbytitle('${t}')/items`, this.wipBody(project));
+    return Number(r.Id);
+  }
+  public async updateCrmWipItem(spId: number, project: CrmWip): Promise<void> {
+    const t = SharePointService.oDataStr(LIST_CRM_WIP);
+    await this.spMerge(`/_api/web/lists/getbytitle('${t}')/items(${spId})`, this.wipBody(project));
+  }
+
+  // ── CRM list provisioning ──────────────────────────────────────────────────
+
+  /** Create all 5 CRM lists with proper columns if they do not already exist. */
+  public async ensureAllCrmLists(): Promise<void> {
+    const ef = (list: string, name: string, kind: number): Promise<void> =>
+      this.ensureCrmListField(list, name, kind);
+
+    const coreText = ['personId', 'organizationId', 'projectTitle', 'discipline',
+      'assignedTo', 'source', 'revisionVersionEng', 'revisionVersionArch'];
+    const coreNote = ['companyAddress', 'projectAddress', 'notes'];
+    const coreDate = ['dateReceived', 'quoteRequiredBy', 'engineerDrawingDate', 'architectDrawingDate'];
+    const coreBool = ['engineerDrawingReceived', 'architectDrawingReceived'];
+    const coreNum  = ['projectValue', 'approximateHours', 'rfiAllowed'];
+
+    await this.ensureCrmList(SharePointService.LIST_CRM_PERSONS, 'CRM contact persons');
+    for (const n of ['organizationId', 'position']) await ef(SharePointService.LIST_CRM_PERSONS, n, 2);
+    for (const n of ['phonesJson', 'emailsJson', 'activitiesJson']) await ef(SharePointService.LIST_CRM_PERSONS, n, 3);
+
+    await this.ensureCrmList(SharePointService.LIST_CRM_COMPANIES, 'CRM companies / organisations');
+    await ef(SharePointService.LIST_CRM_COMPANIES, 'labels', 2);
+    for (const n of ['address', 'phonesJson', 'emailsJson']) await ef(SharePointService.LIST_CRM_COMPANIES, n, 3);
+
+    await this.ensureCrmList(LIST_CRM_RFQS, 'CRM Request for Quotes');
+    for (const n of ['rfqNum', 'stage', 'relatedRfqId', ...coreText]) await ef(LIST_CRM_RFQS, n, 2);
+    for (const n of coreNote) await ef(LIST_CRM_RFQS, n, 3);
+    for (const n of coreDate) await ef(LIST_CRM_RFQS, n, 4);
+    for (const n of ['createQuoteXero', ...coreBool]) await ef(LIST_CRM_RFQS, n, 8);
+    for (const n of coreNum) await ef(LIST_CRM_RFQS, n, 9);
+
+    await this.ensureCrmList(LIST_CRM_QUOTES, 'CRM Quotes');
+    for (const n of ['quoteNum', 'rfqId', 'rfqNum', 'lostReason', 'status', 'relatedRfqId', ...coreText]) await ef(LIST_CRM_QUOTES, n, 2);
+    for (const n of coreNote) await ef(LIST_CRM_QUOTES, n, 3);
+    for (const n of ['quotedDate', ...coreDate]) await ef(LIST_CRM_QUOTES, n, 4);
+    for (const n of ['createQuoteXero', ...coreBool]) await ef(LIST_CRM_QUOTES, n, 8);
+    for (const n of coreNum) await ef(LIST_CRM_QUOTES, n, 9);
+
+    await this.ensureCrmList(LIST_CRM_WIP, 'CRM Work In Progress');
+    for (const n of ['projNum', 'quoteId', 'quoteNum', 'rfqId', 'rfqNum', ...coreText]) await ef(LIST_CRM_WIP, n, 2);
+    for (const n of coreNote) await ef(LIST_CRM_WIP, n, 3);
+    for (const n of ['wonDate', ...coreDate]) await ef(LIST_CRM_WIP, n, 4);
+    for (const n of coreBool) await ef(LIST_CRM_WIP, n, 8);
+    for (const n of coreNum) await ef(LIST_CRM_WIP, n, 9);
   }
 }

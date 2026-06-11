@@ -1,10 +1,19 @@
 import * as React from 'react';
-import { loadProjectsFromSharePoint, loadQuotesFromSharePoint, loadRfqsFromSharePoint, saveQuotesToSharePoint, saveRfqsToSharePoint } from './crmStorage';
+import {
+  loadProjectsFromSharePoint,
+  loadQuotesFromSharePoint,
+  loadRfqsFromSharePoint,
+  loadRfqsRemote,
+  upsertRfqToSharePoint,
+  deleteRfqFromSharePoint,
+  upsertQuoteToSharePoint,
+} from './crmStorage';
 import { copyRfqAttachmentsToQuote, getRfqAttachments, setRfqAttachments } from './crmAttachmentStore';
 import { DocumentUploadSection } from './crmDocumentUpload';
 import { nextRfqNum } from './crmProjectHelpers';
 import type { CrmAttachment } from './crmTypes';
 import type { SharePointService } from '../../../shared/services/SharePointService';
+import { normalizeCrmRfq } from './crmRfqNormalize';
 import type { CrmPerson, CrmCompany, CrmQuote, CrmRfq, CrmRfqDiscipline, CrmRfqStage } from './crmTypes';
 
 const FF = 'Montserrat,sans-serif';
@@ -147,18 +156,8 @@ const DisciplineBadges: React.FC<{ discipline: CrmRfqDiscipline }> = ({ discipli
   return <span style={disciplineBadgeStyle(kind)}>{kind.toUpperCase()}</span>;
 };
 
-const normalizeRfq = (r: CrmRfq): CrmRfq => ({
-  ...r,
-  approximateHours: typeof r.approximateHours === 'number' ? r.approximateHours : 0,
-  engineerDrawingReceived: !!r.engineerDrawingReceived,
-  engineerDrawingDate: r.engineerDrawingDate || '',
-  revisionVersionEng: r.revisionVersionEng || '',
-  architectDrawingReceived: !!r.architectDrawingReceived,
-  architectDrawingDate: r.architectDrawingDate || '',
-  revisionVersionArch: r.revisionVersionArch || '',
-  rfiAllowed: typeof r.rfiAllowed === 'number' ? r.rfiAllowed : (r.rfiAllowed ? 1 : 0),
-  companyAddress: r.companyAddress || '',
-});
+const normalizeRfq = (r: CrmRfq): CrmRfq =>
+  normalizeCrmRfq(r as CrmRfq & Record<string, unknown>);
 
 const DrawingReceivedField: React.FC<{
   label: string;
@@ -471,7 +470,17 @@ const CrmRfqTab: React.FC<{
   const quotesRef = React.useRef(quotes);
   rfqsRef.current = rfqs;
   quotesRef.current = quotes;
-  const saveTimerRef = React.useRef<ReturnType<typeof setTimeout> | null>(null);
+  const reloadRfqs = React.useCallback(async (): Promise<void> => {
+    try {
+      const remote = await loadRfqsRemote(spService);
+      if (remote === null) return;
+      const next = remote.map(normalizeRfq);
+      if (JSON.stringify(next) !== JSON.stringify(rfqsRef.current)) {
+        setRfqs(next);
+        try { localStorage.setItem(LS_RFQS, JSON.stringify(next)); } catch { /* ignore */ }
+      }
+    } catch { /* ignore */ }
+  }, [spService]);
 
   React.useEffect(() => {
     let cancelled = false;
@@ -501,30 +510,14 @@ const CrmRfqTab: React.FC<{
 
   React.useEffect(() => {
     if (!rfqReady) return;
-    const iv = setInterval(() => {
-      void (async () => {
-        try {
-          const data = (await loadRfqsFromSharePoint(spService)).map(normalizeRfq);
-          const remoteStr = JSON.stringify(data);
-          const localStr = JSON.stringify(rfqsRef.current);
-          if (remoteStr !== localStr) setRfqs(data);
-        } catch { /* ignore */ }
-      })();
-    }, 12000);
-    return () => clearInterval(iv);
-  }, [rfqReady, spService]);
-
-  React.useEffect(() => {
-    if (!rfqReady) return;
-    localStorage.setItem(LS_RFQS, JSON.stringify(rfqs));
-    if (saveTimerRef.current) clearTimeout(saveTimerRef.current);
-    saveTimerRef.current = setTimeout(() => {
-      void saveRfqsToSharePoint(spService, rfqsRef.current).catch(() => undefined);
-    }, 2000);
+    const iv = setInterval(() => { void reloadRfqs(); }, 12000);
+    const onFocus = (): void => { void reloadRfqs(); };
+    window.addEventListener('focus', onFocus);
     return () => {
-      if (saveTimerRef.current) clearTimeout(saveTimerRef.current);
+      clearInterval(iv);
+      window.removeEventListener('focus', onFocus);
     };
-  }, [rfqs, rfqReady, spService]);
+  }, [rfqReady, reloadRfqs]);
 
   const companyName = (id: string): string => companies.find(c => c.id === id)?.name || '—';
 
@@ -560,15 +553,32 @@ const CrmRfqTab: React.FC<{
     setRfqs(prev => {
       const next = prev.some(x => x.id === saved.id) ? prev.map(x => x.id === saved.id ? saved : x) : [...prev, saved];
       rfqsRef.current = next;
-      if (saveTimerRef.current) clearTimeout(saveTimerRef.current);
-      void saveRfqsToSharePoint(spService, next).catch(() => undefined);
+      try { localStorage.setItem(LS_RFQS, JSON.stringify(next)); } catch { /* ignore */ }
       return next;
     });
     setModal(null);
+    void upsertRfqToSharePoint(spService, saved).then(withSpId => {
+      if (withSpId.spId !== saved.spId) {
+        setRfqs(prev => {
+          const next = prev.map(x => x.id === withSpId.id ? { ...x, spId: withSpId.spId } : x);
+          rfqsRef.current = next;
+          try { localStorage.setItem(LS_RFQS, JSON.stringify(next)); } catch { /* ignore */ }
+          return next;
+        });
+      }
+    }).catch(() => undefined);
   };
 
   const deleteRfq = (id: string): void => {
-    if (confirm('Delete this RFQ?')) setRfqs(prev => prev.filter(x => x.id !== id));
+    if (!confirm('Delete this RFQ?')) return;
+    const toDelete = rfqsRef.current.find(x => x.id === id);
+    setRfqs(prev => {
+      const next = prev.filter(x => x.id !== id);
+      rfqsRef.current = next;
+      try { localStorage.setItem(LS_RFQS, JSON.stringify(next)); } catch { /* ignore */ }
+      return next;
+    });
+    if (toDelete) void deleteRfqFromSharePoint(spService, toDelete).catch(() => undefined);
   };
 
   const confirmMoveToQuote = (rfq: CrmRfq, xeroQuoteNum: string): void => {
@@ -591,14 +601,13 @@ const CrmRfqTab: React.FC<{
       setQuotes(nextQuotes);
       rfqsRef.current = nextRfqs;
       quotesRef.current = nextQuotes;
-      if (saveTimerRef.current) clearTimeout(saveTimerRef.current);
       setMoveQuoteRfq(null);
 
       onMovedToQuote?.(nextQuotes);
 
       await Promise.all([
-        saveQuotesToSharePoint(spService, nextQuotes),
-        saveRfqsToSharePoint(spService, nextRfqs),
+        upsertQuoteToSharePoint(spService, quote),
+        deleteRfqFromSharePoint(spService, rfq),
       ]);
     })();
   };
