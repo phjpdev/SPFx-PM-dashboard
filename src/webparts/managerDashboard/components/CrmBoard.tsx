@@ -1,7 +1,10 @@
 import * as React from 'react';
 import { runCrmImport } from './crmImport';
-import { loadCrmDelta, loadCrmPersonsCompanies, saveCrmPersonsCompanies } from './crmStorage';
-import { cloneStaticCrm } from './crmStaticData';
+import {
+  loadCrmDelta, loadCrmPersonsCompanies, saveCrmPersonsCompanies, importCrmPersonsCompanies,
+  upsertPersonToSharePoint, upsertCompanyToSharePoint,
+  deletePersonFromSharePoint, deleteCompanyFromSharePoint,
+} from './crmStorage';
 import CrmRfqTab from './CrmRfqTab';
 import CrmQuotesTab from './CrmQuotesTab';
 import CrmProjectsTab from './CrmProjectsTab';
@@ -1061,16 +1064,15 @@ const CrmBoard: React.FC<CrmBoardProps> = ({ spService }) => {
   const [quotesSeed, setQuotesSeed] = React.useState<CrmQuote[] | null>(null);
   const [projectsRefreshKey, setProjectsRefreshKey] = React.useState(0);
   const clearQuotesSeed = React.useCallback((): void => setQuotesSeed(null), []);
-  const [persons, setPersons]     = React.useState<CrmPerson[]>(() => cloneStaticCrm().persons);
-  const [companies, setCompanies] = React.useState<CrmCompany[]>(() => cloneStaticCrm().companies);
+  const [persons, setPersons]     = React.useState<CrmPerson[]>([]);
+  const [companies, setCompanies] = React.useState<CrmCompany[]>([]);
   const [crmReady, setCrmReady]   = React.useState(false);
-  const [syncState, setSyncState] = React.useState<'idle' | 'loading' | 'saving'>('loading');
-  const [spSyncNote, setSpSyncNote] = React.useState('');
   type PersonModalState = { person: CrmPerson; isNew: boolean; openInView: boolean };
   type CompanyModalState = { company: CrmCompany; isNew: boolean; openInView: boolean };
   const [personModal, setPersonModal]   = React.useState<PersonModalState | null>(null);
   const [companyModal, setCompanyModal] = React.useState<CompanyModalState | null>(null);
   const [importModal, setImportModal]   = React.useState(false);
+  const [importProgress, setImportProgress] = React.useState<{ done: number; total: number } | null>(null);
   const [search, setSearch]             = React.useState('');
   const [personSort, setPersonSort]     = React.useState<{ key: PersonSortKey; dir: SortDir } | null>(null);
   const [companySort, setCompanySort] = React.useState<{ key: CompanySortKey; dir: SortDir } | null>(null);
@@ -1083,6 +1085,8 @@ const CrmBoard: React.FC<CrmBoardProps> = ({ spService }) => {
   const lastLocalEditAtRef = React.useRef(0);
   const deltaRevisionRef = React.useRef(0);
   const saveTimerRef = React.useRef<ReturnType<typeof setTimeout> | null>(null);
+  const saveInProgressRef = React.useRef(false);
+  const lastImportAtRef = React.useRef(0);
 
   const applyRemote = (data: { persons: CrmPerson[]; companies: CrmCompany[] }): void => {
     setPersons(data.persons);
@@ -1111,12 +1115,16 @@ const CrmBoard: React.FC<CrmBoardProps> = ({ spService }) => {
   React.useEffect(() => {
     let cancelled = false;
     setCrmReady(false);
-    setSyncState('loading');
     void (async () => {
       try {
-        // Ensure all 5 CRM lists exist (creates them if missing — idempotent).
-        // Runs as best-effort: a permissions failure here must not prevent data loading.
-        try { await spService.ensureAllCrmLists(); } catch { /* requires site owner — ignored */ }
+        // Ensure all 5 CRM lists exist — skip if already confirmed in this browser.
+        const listsOk = localStorage.getItem('3edge-crm-lists-ok');
+        if (!listsOk) {
+          try {
+            await spService.ensureAllCrmLists();
+            localStorage.setItem('3edge-crm-lists-ok', '1');
+          } catch { /* requires site owner — ignored */ }
+        }
         const [data, delta] = await Promise.all([
           loadCrmPersonsCompanies(spService),
           loadCrmDelta(spService),
@@ -1124,31 +1132,30 @@ const CrmBoard: React.FC<CrmBoardProps> = ({ spService }) => {
         if (cancelled) return;
         if (delta?.revision) deltaRevisionRef.current = delta.revision;
         applyRemote(data);
-        setSpSyncNote('');
-      } catch {
-        if (!cancelled) setSpSyncNote('Using local copy — could not load from SharePoint.');
-      } finally {
-        if (!cancelled) {
-          setSyncState('idle');
-          setCrmReady(true);
-        }
+      } catch { /* SP unavailable — local cache shown */ }
+      finally {
+        if (!cancelled) setCrmReady(true);
       }
     })();
     return () => { cancelled = true; };
   }, [spService]);
 
-  const flushSave = React.useCallback(async (): Promise<void> => {
-    setSyncState('saving');
+  const flushSave = React.useCallback((): void => {
+    if (saveInProgressRef.current) return;
+    if (Date.now() - lastImportAtRef.current < 30000) return;
+    saveInProgressRef.current = true;
     const inputRevision = deltaRevisionRef.current;
-    const { ok, revision } = await saveCrmPersonsCompanies(
+    void saveCrmPersonsCompanies(
       spService, personsRef.current, companiesRef.current, inputRevision,
-    );
-    if (inputRevision === deltaRevisionRef.current) {
-      deltaRevisionRef.current = revision;
-    }
-    lastSaveAtRef.current = Date.now();
-    setSyncState('idle');
-    setSpSyncNote(ok ? '' : 'Saved in this browser only — SharePoint sync failed. Check Contribute access on 3Edge_CRM_Persons / 3Edge_CRM_Companies.');
+    ).then(({ revision }) => {
+      saveInProgressRef.current = false;
+      if (inputRevision === deltaRevisionRef.current) {
+        deltaRevisionRef.current = revision;
+      }
+      lastSaveAtRef.current = Date.now();
+    }).catch(() => {
+      saveInProgressRef.current = false;
+    });
   }, [spService]);
 
   React.useEffect(() => {
@@ -1182,9 +1189,16 @@ const CrmBoard: React.FC<CrmBoardProps> = ({ spService }) => {
     setPersonModal(prev => (prev && prev.person.id === saved.id
       ? { ...prev, person: saved, openInView: !prev.isNew }
       : prev));
+    void upsertPersonToSharePoint(spService, saved).then(withSpId => {
+      if (withSpId.spId !== saved.spId) {
+        setPersons(prev => prev.map(x => x.id === withSpId.id ? withSpId : x));
+      }
+    });
   };
   const deletePerson = (id: string): void => {
     touchLocalEdit();
+    const target = persons.find(x => x.id === id);
+    if (target) void deletePersonFromSharePoint(spService, target);
     setPersons(prev => prev.filter(x => x.id !== id));
     setPersonModal(prev => (prev?.person.id === id ? null : prev));
   };
@@ -1192,9 +1206,16 @@ const CrmBoard: React.FC<CrmBoardProps> = ({ spService }) => {
     touchLocalEdit();
     setCompanies(prev => prev.some(x => x.id === c.id) ? prev.map(x => x.id === c.id ? c : x) : [...prev, c]);
     setCompanyModal(prev => (prev && prev.company.id === c.id ? { ...prev, company: c } : prev));
+    void upsertCompanyToSharePoint(spService, c).then(withSpId => {
+      if (withSpId.spId !== c.spId) {
+        setCompanies(prev => prev.map(x => x.id === withSpId.id ? withSpId : x));
+      }
+    });
   };
   const deleteCompany = (id: string): void => {
     touchLocalEdit();
+    const target = companies.find(x => x.id === id);
+    if (target) void deleteCompanyFromSharePoint(spService, target);
     setCompanies(prev => prev.filter(x => x.id !== id));
     setCompanyModal(prev => (prev?.company.id === id ? null : prev));
   };
@@ -1203,13 +1224,36 @@ const CrmBoard: React.FC<CrmBoardProps> = ({ spService }) => {
 
   const handleImport = (orgBuf: ArrayBuffer | null, peopleBuf: ArrayBuffer | null): void => {
     const { companies: nextCo, persons: nextPe } = runCrmImport(companies, persons, orgBuf, peopleBuf);
+    try { localStorage.removeItem('3edge-crm-persons'); } catch { /* ignore */ }
+    try { localStorage.removeItem('3edge-crm-companies'); } catch { /* ignore */ }
     setCompanies(nextCo);
     setPersons(nextPe);
     setImportModal(false);
+    // Block the auto-save timer — import writes each record individually to SP.
     if (saveTimerRef.current) clearTimeout(saveTimerRef.current);
-    personsRef.current = nextPe;
-    companiesRef.current = nextCo;
-    void flushSave();
+    saveInProgressRef.current = true;
+    setImportProgress({ done: 0, total: nextCo.length + nextPe.length });
+    void importCrmPersonsCompanies(
+      spService, nextPe, nextCo,
+      (done, total) => {
+        lastLocalEditAtRef.current = Date.now();
+        setImportProgress({ done, total });
+      },
+    ).then(({ persons: saved, companies: savedCo }) => {
+      // Update state with spIds so future per-record saves use MERGE, not POST.
+      personsRef.current = saved;
+      companiesRef.current = savedCo;
+      setPersons(saved);
+      setCompanies(savedCo);
+      setImportProgress(null);
+      lastSaveAtRef.current = Date.now();
+      lastImportAtRef.current = Date.now();
+      if (saveTimerRef.current) clearTimeout(saveTimerRef.current);
+      saveInProgressRef.current = false;
+    }).catch(() => {
+      setImportProgress(null);
+      saveInProgressRef.current = false;
+    });
   };
 
   const q = search.toLowerCase();
@@ -1305,22 +1349,6 @@ const CrmBoard: React.FC<CrmBoardProps> = ({ spService }) => {
   return (
     <div style={{ background: C.bg, minHeight: 400, borderRadius: 8, padding: '0 0 24px 0', width: '100%', maxWidth: '100%', boxSizing: 'border-box' }}>
 
-      {syncState !== 'idle' && (tab === 'persons' || tab === 'companies') && (
-        <div style={{
-          padding: '8px 12px', marginBottom: 8, borderRadius: 4, fontFamily: FF, fontSize: 11, fontWeight: 600,
-          color: C.sub, background: C.thBg, border: `1px solid ${C.border}`,
-        }}>
-          {syncState === 'loading' ? 'Loading CRM from SharePoint…' : 'Saving CRM…'}
-        </div>
-      )}
-      {spSyncNote && syncState === 'idle' && (tab === 'persons' || tab === 'companies') && (
-        <div style={{
-          padding: '8px 12px', marginBottom: 8, borderRadius: 4, fontFamily: FF, fontSize: 11, fontWeight: 600,
-          color: C.sub, background: 'rgba(90,110,136,.08)', border: `1px solid ${C.border}`,
-        }}>
-          {spSyncNote}
-        </div>
-      )}
 
       <>
       {/* ── Toolbar */}
@@ -1354,6 +1382,15 @@ const CrmBoard: React.FC<CrmBoardProps> = ({ spService }) => {
           </div>
         )}
       </div>
+
+      {/* ── Import progress banner */}
+      {importProgress && (
+        <div style={{ padding: '10px 16px', background: C.purple, color: '#fff', fontFamily: FF, fontSize: 12, borderRadius: 4, margin: '4px 0', display: 'flex', alignItems: 'center', gap: 12 }}>
+          <span>Saving to SharePoint… {importProgress.done} / {importProgress.total}</span>
+          <span style={{ fontWeight: 700 }}>({importProgress.total > 0 ? Math.round(importProgress.done / importProgress.total * 100) : 0}%)</span>
+          <span style={{ color: 'rgba(255,255,255,0.7)', fontSize: 11 }}>Do not close this tab.</span>
+        </div>
+      )}
 
       {/* ── Table */}
       {(tab === 'persons' || tab === 'companies') && !crmReady && (

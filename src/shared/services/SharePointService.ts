@@ -86,7 +86,7 @@ export class SharePointService {
     return r.json();
   }
 
-  private async spPost(path: string, body: any, retry = true): Promise<any> { // eslint-disable-line @typescript-eslint/no-explicit-any
+  private async spPost(path: string, body: any, attempt = 0): Promise<any> { // eslint-disable-line @typescript-eslint/no-explicit-any
     const digest = await this.getDigest();
     const r = await fetch(this._siteUrl + path, {
       method: 'POST',
@@ -99,10 +99,14 @@ export class SharePointService {
       body: JSON.stringify(body)
     });
     if (!r.ok) {
-      // Auto-retry once on 403 (expired digest)
-      if (r.status === 403 && retry) {
+      if (r.status === 429 && attempt < 4) {
+        const wait = Math.max(Number(r.headers.get('Retry-After') || '10'), 5) * 1000;
+        await new Promise<void>(resolve => setTimeout(resolve, wait));
+        return this.spPost(path, body, attempt + 1);
+      }
+      if (r.status === 403 && attempt === 0) {
         this._digest = ''; this._digestTime = 0;
-        return this.spPost(path, body, false);
+        return this.spPost(path, body, attempt + 1);
       }
       let msg = 'HTTP ' + r.status;
       try { const e = await r.json(); const em = e.error?.message; msg = (typeof em === 'object' && em?.value) ? em.value : (em || e.error?.code || msg); } catch (_x) { /* ignore */ }
@@ -112,7 +116,7 @@ export class SharePointService {
     return text ? JSON.parse(text) : {};
   }
 
-  private async spMerge(path: string, body: any, retry = true): Promise<void> { // eslint-disable-line @typescript-eslint/no-explicit-any
+  private async spMerge(path: string, body: any, attempt = 0): Promise<void> { // eslint-disable-line @typescript-eslint/no-explicit-any
     const digest = await this.getDigest();
     const r = await fetch(this._siteUrl + path, {
       method: 'POST',
@@ -127,14 +131,17 @@ export class SharePointService {
       body: JSON.stringify(body)
     });
     if (!r.ok) {
-      // Auto-retry once on 403 (expired digest)
-      if (r.status === 403 && retry) {
+      if (r.status === 429 && attempt < 4) {
+        const wait = Math.max(Number(r.headers.get('Retry-After') || '10'), 5) * 1000;
+        await new Promise<void>(resolve => setTimeout(resolve, wait));
+        return this.spMerge(path, body, attempt + 1);
+      }
+      if (r.status === 403 && attempt === 0) {
         this._digest = ''; this._digestTime = 0;
-        return this.spMerge(path, body, false);
+        return this.spMerge(path, body, attempt + 1);
       }
       let msg = 'HTTP ' + r.status;
       try { const e = await r.json(); const em = e.error?.message; msg = (typeof em === 'object' && em?.value) ? em.value : (em || e.error?.code || msg); } catch (_x) { /* ignore */ }
-      // if digest expired, clear cache so next call refreshes it
       if (r.status === 403) this._digest = '';
       throw new Error(msg);
     }
@@ -873,7 +880,7 @@ export class SharePointService {
       `/_api/web/lists/getbytitle('${t}')/items?$select=Id,Title,crmId,organizationId,position,phonesJson,emailsJson,activitiesJson&$top=2000&$orderby=Title asc`,
     );
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
-    return (d.value || []).map((i: any) => ({
+    const raw = (d.value || []).map((i: any) => ({
       id: String(i.crmId || String(i.Id)),
       spId: Number(i.Id),
       name: i.Title || '',
@@ -883,6 +890,7 @@ export class SharePointService {
       emails: this.parseJson(i.emailsJson, []),
       activities: i.activitiesJson ? this.parseJson<CrmPerson['activities']>(i.activitiesJson, undefined) : undefined,
     }));
+    return SharePointService.dedupeById(raw);
   }
 
   public async syncCrmPersons(persons: CrmPerson[]): Promise<CrmPerson[]> {
@@ -892,25 +900,59 @@ export class SharePointService {
     const keep = new Set(persons.map(p => p.id));
     const result: CrmPerson[] = [];
 
-    for (const p of persons) {
-      const body = this.personBody(p);
-      const spId = p.spId ?? byId.get(p.id);
-      if (spId) {
-        await this.spMerge(`/_api/web/lists/getbytitle('${t}')/items(${spId})`, body);
-        result.push({ ...p, spId });
-      } else {
-        const r = await this.spPost(`/_api/web/lists/getbytitle('${t}')/items`, body);
-        result.push({ ...p, spId: Number(r.Id) });
-      }
+    // Run 2 upserts concurrently; individual failures skip that item (don't abort the whole sync).
+    const BATCH = 2;
+    for (let i = 0; i < persons.length; i += BATCH) {
+      const batch = persons.slice(i, i + BATCH);
+      const batchResult = await Promise.all(batch.map(async p => {
+        try {
+          const body = this.personBody(p);
+          const spId = p.spId ?? byId.get(p.id);
+          if (spId) {
+            await this.spMerge(`/_api/web/lists/getbytitle('${t}')/items(${spId})`, body);
+            return { ...p, spId };
+          } else {
+            const r = await this.spPost(`/_api/web/lists/getbytitle('${t}')/items`, body);
+            return { ...p, spId: Number(r.Id) };
+          }
+        } catch { return p; }
+      }));
+      result.push(...batchResult);
     }
 
-    for (const e of existing) {
-      if (e.id && !keep.has(e.id) && e.spId) {
-        await this.spDelete(`/_api/web/lists/getbytitle('${t}')/items(${e.spId})`);
-      }
+    // Delete rows not in the new list (also batched so the delete phase always runs).
+    const toDelete = existing.filter(e => e.id && !keep.has(e.id) && e.spId);
+    for (let i = 0; i < toDelete.length; i += BATCH) {
+      await Promise.all(toDelete.slice(i, i + BATCH).map(async e => {
+        try { await this.spDelete(`/_api/web/lists/getbytitle('${t}')/items(${e.spId})`); } catch { /* ignore */ }
+      }));
     }
 
     return result;
+  }
+
+  public async addCrmPerson(p: CrmPerson): Promise<number> {
+    const t = SharePointService.oDataStr(SharePointService.LIST_CRM_PERSONS);
+    const r = await this.spPost(`/_api/web/lists/getbytitle('${t}')/items`, this.personBody(p));
+    return Number(r.Id);
+  }
+
+  public async updateCrmPerson(spId: number, p: CrmPerson): Promise<void> {
+    const t = SharePointService.oDataStr(SharePointService.LIST_CRM_PERSONS);
+    await this.spMerge(`/_api/web/lists/getbytitle('${t}')/items(${spId})`, this.personBody(p));
+  }
+
+  public async deleteCrmPersonById(spId: number): Promise<void> {
+    const t = SharePointService.oDataStr(SharePointService.LIST_CRM_PERSONS);
+    await this.spDelete(`/_api/web/lists/getbytitle('${t}')/items(${spId})`);
+  }
+
+  public async deleteAllCrmPersons(): Promise<void> {
+    const t = SharePointService.oDataStr(SharePointService.LIST_CRM_PERSONS);
+    const d = await this.spGet(`/_api/web/lists/getbytitle('${t}')/items?$select=Id&$top=2000`);
+    for (const item of ((d.value ?? []) as { Id: number }[])) {
+      try { await this.spDelete(`/_api/web/lists/getbytitle('${t}')/items(${item.Id})`); } catch { /* ignore */ }
+    }
   }
 
   // ── CRM Companies ──────────────────────────────────────────────────────────
@@ -950,25 +992,57 @@ export class SharePointService {
     const keep = new Set(companies.map(c => c.id));
     const result: CrmCompany[] = [];
 
-    for (const c of companies) {
-      const body = this.companyBody(c);
-      const spId = c.spId ?? byId.get(c.id);
-      if (spId) {
-        await this.spMerge(`/_api/web/lists/getbytitle('${t}')/items(${spId})`, body);
-        result.push({ ...c, spId });
-      } else {
-        const r = await this.spPost(`/_api/web/lists/getbytitle('${t}')/items`, body);
-        result.push({ ...c, spId: Number(r.Id) });
-      }
+    const BATCH = 2;
+    for (let i = 0; i < companies.length; i += BATCH) {
+      const batch = companies.slice(i, i + BATCH);
+      const batchResult = await Promise.all(batch.map(async c => {
+        try {
+          const body = this.companyBody(c);
+          const spId = c.spId ?? byId.get(c.id);
+          if (spId) {
+            await this.spMerge(`/_api/web/lists/getbytitle('${t}')/items(${spId})`, body);
+            return { ...c, spId };
+          } else {
+            const r = await this.spPost(`/_api/web/lists/getbytitle('${t}')/items`, body);
+            return { ...c, spId: Number(r.Id) };
+          }
+        } catch { return c; }
+      }));
+      result.push(...batchResult);
     }
 
-    for (const e of existing) {
-      if (e.id && !keep.has(e.id) && e.spId) {
-        await this.spDelete(`/_api/web/lists/getbytitle('${t}')/items(${e.spId})`);
-      }
+    const toDelete = existing.filter(e => e.id && !keep.has(e.id) && e.spId);
+    for (let i = 0; i < toDelete.length; i += BATCH) {
+      await Promise.all(toDelete.slice(i, i + BATCH).map(async e => {
+        try { await this.spDelete(`/_api/web/lists/getbytitle('${t}')/items(${e.spId})`); } catch { /* ignore */ }
+      }));
     }
 
     return result;
+  }
+
+  public async addCrmCompany(c: CrmCompany): Promise<number> {
+    const t = SharePointService.oDataStr(SharePointService.LIST_CRM_COMPANIES);
+    const r = await this.spPost(`/_api/web/lists/getbytitle('${t}')/items`, this.companyBody(c));
+    return Number(r.Id);
+  }
+
+  public async updateCrmCompany(spId: number, c: CrmCompany): Promise<void> {
+    const t = SharePointService.oDataStr(SharePointService.LIST_CRM_COMPANIES);
+    await this.spMerge(`/_api/web/lists/getbytitle('${t}')/items(${spId})`, this.companyBody(c));
+  }
+
+  public async deleteCrmCompanyById(spId: number): Promise<void> {
+    const t = SharePointService.oDataStr(SharePointService.LIST_CRM_COMPANIES);
+    await this.spDelete(`/_api/web/lists/getbytitle('${t}')/items(${spId})`);
+  }
+
+  public async deleteAllCrmCompanies(): Promise<void> {
+    const t = SharePointService.oDataStr(SharePointService.LIST_CRM_COMPANIES);
+    const d = await this.spGet(`/_api/web/lists/getbytitle('${t}')/items?$select=Id&$top=2000`);
+    for (const item of ((d.value ?? []) as { Id: number }[])) {
+      try { await this.spDelete(`/_api/web/lists/getbytitle('${t}')/items(${item.Id})`); } catch { /* ignore */ }
+    }
   }
 
   // ── CRM RFQs ───────────────────────────────────────────────────────────────
@@ -1000,7 +1074,15 @@ export class SharePointService {
       createQuoteXero: !!i.createQuoteXero,
       relatedRfqId: i.relatedRfqId || '',
     }));
-    return SharePointService.dedupeById(raw);
+    const deduped = SharePointService.dedupeById(raw);
+    // Secondary dedup by rfqNum — keep the row with the highest spId per number.
+    const byNum = new Map<string, CrmRfq>();
+    for (const r of deduped) {
+      if (!r.rfqNum) continue;
+      const prev = byNum.get(r.rfqNum);
+      if (!prev || (r.spId ?? 0) > (prev.spId ?? 0)) byNum.set(r.rfqNum, r);
+    }
+    return deduped.filter(r => !r.rfqNum || byNum.get(r.rfqNum) === r);
   }
 
   public async syncCrmRfqs(rfqs: CrmRfq[]): Promise<CrmRfq[]> {
@@ -1201,6 +1283,16 @@ export class SharePointService {
     await this.spDelete(`/_api/web/lists/getbytitle('${SharePointService.oDataStr(LIST_CRM_RFQS)}')/items(${spId})`);
   }
 
+  /** Delete every SP row for this crmId (handles duplicate rows left by old bulk-sync bugs). */
+  public async deleteAllCrmRfqsByCrmId(crmId: string): Promise<void> {
+    const t = SharePointService.oDataStr(LIST_CRM_RFQS);
+    const safe = crmId.replace(/'/g, "''");
+    const d = await this.spGet(`/_api/web/lists/getbytitle('${t}')/items?$select=Id&$filter=crmId eq '${safe}'&$top=200`);
+    for (const item of ((d.value ?? []) as { Id: number }[])) {
+      try { await this.spDelete(`/_api/web/lists/getbytitle('${t}')/items(${item.Id})`); } catch { /* ignore */ }
+    }
+  }
+
   public async addCrmQuote(quote: CrmQuote): Promise<number> {
     const t = SharePointService.oDataStr(LIST_CRM_QUOTES);
     const r = await this.spPost(`/_api/web/lists/getbytitle('${t}')/items`, this.quoteBody(quote));
@@ -1212,6 +1304,16 @@ export class SharePointService {
   }
   public async deleteCrmQuoteById(spId: number): Promise<void> {
     await this.spDelete(`/_api/web/lists/getbytitle('${SharePointService.oDataStr(LIST_CRM_QUOTES)}')/items(${spId})`);
+  }
+
+  /** Delete every SP row for this crmId (handles duplicate rows left by old bulk-sync bugs). */
+  public async deleteAllCrmQuotesByCrmId(crmId: string): Promise<void> {
+    const t = SharePointService.oDataStr(LIST_CRM_QUOTES);
+    const safe = crmId.replace(/'/g, "''");
+    const d = await this.spGet(`/_api/web/lists/getbytitle('${t}')/items?$select=Id&$filter=crmId eq '${safe}'&$top=200`);
+    for (const item of ((d.value ?? []) as { Id: number }[])) {
+      try { await this.spDelete(`/_api/web/lists/getbytitle('${t}')/items(${item.Id})`); } catch { /* ignore */ }
+    }
   }
 
   public async addCrmWipItem(project: CrmWip): Promise<number> {
