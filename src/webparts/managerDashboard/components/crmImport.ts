@@ -130,9 +130,32 @@ export interface CrmImportStats {
   personRows: number;
 }
 
+/** Deduplicate companies by normalized name — keep first occurrence. */
+function dedupeCompanies(list: CrmCompany[]): CrmCompany[] {
+  const seen = new Set<string>();
+  return list.filter(c => {
+    const k = normName(c.name);
+    if (seen.has(k)) return false;
+    seen.add(k);
+    return true;
+  });
+}
+
+/** Deduplicate persons — by email if present (most unique), else by name only. */
+function dedupePersons(list: CrmPerson[]): CrmPerson[] {
+  const seen = new Set<string>();
+  return list.filter(p => {
+    const email = (p.emails?.find(e => e.value)?.value || '').toLowerCase().trim();
+    const k = email ? `e:${email}` : `n:${normName(p.name)}`;
+    if (seen.has(k)) return false;
+    seen.add(k);
+    return true;
+  });
+}
+
 /**
- * Import every Excel row as its own record (no deduplication).
- * Selected files replace that section of CRM data entirely.
+ * Import from Excel files. Selected files replace that section of CRM data entirely.
+ * Duplicates (same company name; same person name + company) are removed.
  */
 export function runCrmImport(
   existingCompanies: CrmCompany[],
@@ -148,11 +171,11 @@ export function runCrmImport(
   let persons = existingPersons;
 
   if (orgBuffer) {
-    companies = parseOrganizationsFile(orgBuffer);
+    companies = dedupeCompanies(parseOrganizationsFile(orgBuffer));
   }
 
   if (peopleBuffer) {
-    persons = parsePeopleFile(peopleBuffer, buildCompanyMap(companies));
+    persons = dedupePersons(parsePeopleFile(peopleBuffer, buildCompanyMap(companies)));
   }
 
   return {

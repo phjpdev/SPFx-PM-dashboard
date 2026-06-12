@@ -1,7 +1,6 @@
 import type { SharePointService } from '../../../shared/services/SharePointService';
 import type { CrmPerson, CrmCompany, CrmRfq, CrmQuote, CrmProject } from './crmTypes';
 import { normalizeCrmQuote, normalizeCrmRfq } from './crmRfqNormalize';
-import { cloneStaticCrm } from './crmStaticData';
 
 export interface CrmQuoteBudget {
   year: number;
@@ -74,18 +73,6 @@ export async function loadCrmPersonsCompanies(sp: SharePointService): Promise<Cr
       sp.loadCrmCompanies(),
     ]);
 
-    if (persons.length === 0 && companies.length === 0) {
-      // First run — seed SP lists from bundled static data
-      const baseline = cloneStaticCrm();
-      try {
-        await Promise.all([
-          sp.syncCrmPersons(baseline.persons),
-          sp.syncCrmCompanies(baseline.companies),
-        ]);
-      } catch { /* seed failed — use static in-memory */ }
-      return baseline;
-    }
-
     // Overlay attachments that are kept in browser storage only
     const local = loadLS<CrmPerson[] | null>(LS_PERSONS, null);
     const merged = local?.length ? overlayLocalAttachments(persons, local) : persons;
@@ -95,13 +82,10 @@ export async function loadCrmPersonsCompanies(sp: SharePointService): Promise<Cr
     } catch { /* ignore */ }
     return { persons: merged, companies };
   } catch {
-    // SP unavailable — fall back to local cache, then static
+    // SP unavailable — fall back to local cache
     const cachedP = loadLS<CrmPerson[] | null>(LS_PERSONS, null);
     const cachedC = loadLS<CrmCompany[] | null>(LS_COMPANIES, null);
-    if (cachedP || cachedC) {
-      return { persons: cachedP ?? [], companies: cachedC ?? [] };
-    }
-    return cloneStaticCrm();
+    return { persons: cachedP ?? [], companies: cachedC ?? [] };
   }
 }
 
@@ -137,6 +121,50 @@ export async function saveCrmPersonsCompanies(
   } catch {
     return { ok: false, revision: 0 };
   }
+}
+
+/**
+ * One-time import: clear existing SP rows then add each record individually.
+ * Sequential single-record saves avoid SP throttling on large lists.
+ */
+export async function importCrmPersonsCompanies(
+  sp: SharePointService,
+  persons: CrmPerson[],
+  companies: CrmCompany[],
+  onProgress: (done: number, total: number) => void,
+): Promise<{ persons: CrmPerson[]; companies: CrmCompany[] }> {
+  const total = companies.length + persons.length;
+  let done = 0;
+
+  await sp.deleteAllCrmCompanies();
+  await sp.deleteAllCrmPersons();
+
+  const savedCompanies: CrmCompany[] = [];
+  for (const c of companies) {
+    try {
+      const spId = await sp.addCrmCompany(c);
+      savedCompanies.push({ ...c, spId });
+    } catch { savedCompanies.push(c); }
+    done++;
+    onProgress(done, total);
+  }
+
+  const savedPersons: CrmPerson[] = [];
+  for (const p of persons) {
+    try {
+      const spId = await sp.addCrmPerson(p);
+      savedPersons.push({ ...p, spId });
+    } catch { savedPersons.push(p); }
+    done++;
+    onProgress(done, total);
+  }
+
+  try {
+    localStorage.setItem(LS_PERSONS, JSON.stringify(savedPersons));
+    localStorage.setItem(LS_COMPANIES, JSON.stringify(savedCompanies));
+  } catch { /* ignore */ }
+
+  return { persons: savedPersons, companies: savedCompanies };
 }
 
 // ── RFQs ───────────────────────────────────────────────────────────────────
@@ -237,6 +265,36 @@ export async function saveQuoteBudget(sp: SharePointService, budget: CrmQuoteBud
   try { await sp.setSettingChunks(CRM_SP_QUOTE_BUDGET, JSON.stringify(budget)); } catch { /* ignore */ }
 }
 
+// ── Per-record person / company operations ─────────────────────────────────
+
+export async function upsertPersonToSharePoint(sp: SharePointService, person: CrmPerson): Promise<CrmPerson> {
+  try {
+    if (person.spId) { await sp.updateCrmPerson(person.spId, person); return person; }
+    const spId = await sp.addCrmPerson(person);
+    return { ...person, spId };
+  } catch { return person; }
+}
+
+export async function upsertCompanyToSharePoint(sp: SharePointService, company: CrmCompany): Promise<CrmCompany> {
+  try {
+    if (company.spId) { await sp.updateCrmCompany(company.spId, company); return company; }
+    const spId = await sp.addCrmCompany(company);
+    return { ...company, spId };
+  } catch { return company; }
+}
+
+export async function deletePersonFromSharePoint(sp: SharePointService, person: Pick<CrmPerson, 'spId'>): Promise<void> {
+  if (person.spId) {
+    try { await sp.deleteCrmPersonById(person.spId); } catch { /* ignore */ }
+  }
+}
+
+export async function deleteCompanyFromSharePoint(sp: SharePointService, company: Pick<CrmCompany, 'spId'>): Promise<void> {
+  if (company.spId) {
+    try { await sp.deleteCrmCompanyById(company.spId); } catch { /* ignore */ }
+  }
+}
+
 // ── Per-action SP operations (fast path — no bulk sync) ────────────────────
 
 export async function upsertRfqToSharePoint(sp: SharePointService, rfq: CrmRfq): Promise<CrmRfq> {
@@ -248,8 +306,12 @@ export async function upsertRfqToSharePoint(sp: SharePointService, rfq: CrmRfq):
 }
 
 export async function deleteRfqFromSharePoint(sp: SharePointService, rfq: Pick<CrmRfq, 'id' | 'spId'>): Promise<void> {
-  if (!rfq.spId) return;
-  try { await sp.deleteCrmRfqById(rfq.spId); } catch { /* ignore */ }
+  if (rfq.spId) {
+    try { await sp.deleteCrmRfqById(rfq.spId); } catch { /* ignore */ }
+  }
+  if (rfq.id) {
+    try { await sp.deleteAllCrmRfqsByCrmId(rfq.id); } catch { /* ignore */ }
+  }
 }
 
 export async function upsertQuoteToSharePoint(sp: SharePointService, quote: CrmQuote): Promise<CrmQuote> {
@@ -261,8 +323,14 @@ export async function upsertQuoteToSharePoint(sp: SharePointService, quote: CrmQ
 }
 
 export async function deleteQuoteFromSharePoint(sp: SharePointService, quote: Pick<CrmQuote, 'id' | 'spId'>): Promise<void> {
-  if (!quote.spId) return;
-  try { await sp.deleteCrmQuoteById(quote.spId); } catch { /* ignore */ }
+  // Delete by known spId first (fast path), then sweep all rows by crmId to
+  // remove any older duplicate SP rows that survived from bulk-sync bugs.
+  if (quote.spId) {
+    try { await sp.deleteCrmQuoteById(quote.spId); } catch { /* ignore */ }
+  }
+  if (quote.id) {
+    try { await sp.deleteAllCrmQuotesByCrmId(quote.id); } catch { /* ignore */ }
+  }
 }
 
 export async function upsertWipToSharePoint(sp: SharePointService, project: CrmProject): Promise<CrmProject> {

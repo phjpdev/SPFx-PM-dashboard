@@ -521,6 +521,8 @@ const CrmQuotesTab: React.FC<{
   const [statusFilter, setStatusFilter] = React.useState('all');
   const [modal, setModal] = React.useState<CrmQuote | null>(null);
   const [lostQuote, setLostQuote] = React.useState<CrmQuote | null>(null);
+  const [pendingDelId, setPendingDelId] = React.useState<string | null>(null);
+  const delTimerRef = React.useRef<ReturnType<typeof setTimeout> | null>(null);
   const quotesRef = React.useRef(quotes);
   quotesRef.current = quotes;
   const reload = React.useCallback(async (): Promise<void> => {
@@ -710,7 +712,15 @@ const CrmQuotesTab: React.FC<{
   };
 
   const deleteQuote = (id: string): void => {
-    if (confirm('Delete this quote?')) persistQuotes(quotesRef.current.filter(x => x.id !== id));
+    if (pendingDelId === id) {
+      if (delTimerRef.current) clearTimeout(delTimerRef.current);
+      setPendingDelId(null);
+      persistQuotes(quotesRef.current.filter(x => x.id !== id));
+    } else {
+      setPendingDelId(id);
+      if (delTimerRef.current) clearTimeout(delTimerRef.current);
+      delTimerRef.current = setTimeout(() => setPendingDelId(null), 3000);
+    }
   };
 
   if (!ready) {
@@ -815,7 +825,10 @@ const CrmQuotesTab: React.FC<{
                         <button onClick={() => setLostQuote(item)} style={{ ...actionBtn, border: `1px solid ${C.red}`, background: 'transparent', color: C.red }}>LOST</button>
                       </>
                     )}
-                    <button onClick={() => deleteQuote(item.id)} style={{ ...actionBtn, border: `1px solid ${C.borderMd}`, background: 'transparent', color: C.muted, fontSize: 9 }}>Del</button>
+                    <button
+                      onClick={() => deleteQuote(item.id)}
+                      style={{ ...actionBtn, fontSize: 9, border: `1px solid ${pendingDelId === item.id ? C.red : C.borderMd}`, background: pendingDelId === item.id ? C.red : 'transparent', color: pendingDelId === item.id ? '#fff' : C.muted }}
+                    >{pendingDelId === item.id ? 'Sure?' : 'Del'}</button>
                   </div>
                 </td>
               </tr>

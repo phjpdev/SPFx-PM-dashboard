@@ -466,8 +466,11 @@ const CrmRfqTab: React.FC<{
   const [stageFilter, setStageFilter] = React.useState('all');
   const [modal, setModal] = React.useState<CrmRfq | null>(null);
   const [moveQuoteRfq, setMoveQuoteRfq] = React.useState<CrmRfq | null>(null);
+  const [pendingDelId, setPendingDelId] = React.useState<string | null>(null);
+  const delTimerRef = React.useRef<ReturnType<typeof setTimeout> | null>(null);
   const rfqsRef = React.useRef(rfqs);
   const quotesRef = React.useRef(quotes);
+  const savingRfqRef = React.useRef(false);
   rfqsRef.current = rfqs;
   quotesRef.current = quotes;
   const reloadRfqs = React.useCallback(async (): Promise<void> => {
@@ -549,6 +552,8 @@ const CrmRfqTab: React.FC<{
   });
 
   const saveRfq = (r: CrmRfq): void => {
+    if (savingRfqRef.current) return;
+    savingRfqRef.current = true;
     const saved = normalizeRfq(r);
     setRfqs(prev => {
       const next = prev.some(x => x.id === saved.id) ? prev.map(x => x.id === saved.id ? saved : x) : [...prev, saved];
@@ -558,6 +563,7 @@ const CrmRfqTab: React.FC<{
     });
     setModal(null);
     void upsertRfqToSharePoint(spService, saved).then(withSpId => {
+      savingRfqRef.current = false;
       if (withSpId.spId !== saved.spId) {
         setRfqs(prev => {
           const next = prev.map(x => x.id === withSpId.id ? { ...x, spId: withSpId.spId } : x);
@@ -566,19 +572,26 @@ const CrmRfqTab: React.FC<{
           return next;
         });
       }
-    }).catch(() => undefined);
+    }).catch(() => { savingRfqRef.current = false; });
   };
 
   const deleteRfq = (id: string): void => {
-    if (!confirm('Delete this RFQ?')) return;
-    const toDelete = rfqsRef.current.find(x => x.id === id);
-    setRfqs(prev => {
-      const next = prev.filter(x => x.id !== id);
-      rfqsRef.current = next;
-      try { localStorage.setItem(LS_RFQS, JSON.stringify(next)); } catch { /* ignore */ }
-      return next;
-    });
-    if (toDelete) void deleteRfqFromSharePoint(spService, toDelete).catch(() => undefined);
+    if (pendingDelId === id) {
+      if (delTimerRef.current) clearTimeout(delTimerRef.current);
+      setPendingDelId(null);
+      const toDelete = rfqsRef.current.find(x => x.id === id);
+      setRfqs(prev => {
+        const next = prev.filter(x => x.id !== id);
+        rfqsRef.current = next;
+        try { localStorage.setItem(LS_RFQS, JSON.stringify(next)); } catch { /* ignore */ }
+        return next;
+      });
+      if (toDelete) void deleteRfqFromSharePoint(spService, toDelete).catch(() => undefined);
+    } else {
+      setPendingDelId(id);
+      if (delTimerRef.current) clearTimeout(delTimerRef.current);
+      delTimerRef.current = setTimeout(() => setPendingDelId(null), 3000);
+    }
   };
 
   const confirmMoveToQuote = (rfq: CrmRfq, xeroQuoteNum: string): void => {
@@ -712,9 +725,9 @@ const CrmRfqTab: React.FC<{
                     ) : (
                       <button
                         onClick={() => deleteRfq(r.id)}
-                        style={{ ...actionBtn, border: `1px solid ${C.red}`, background: 'transparent', color: C.red }}
+                        style={{ ...actionBtn, border: `1px solid ${C.red}`, background: pendingDelId === r.id ? C.red : 'transparent', color: pendingDelId === r.id ? '#fff' : C.red }}
                       >
-                        Del
+                        {pendingDelId === r.id ? 'Sure?' : 'Del'}
                       </button>
                     )}
                   </div>
