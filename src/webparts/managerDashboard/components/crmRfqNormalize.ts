@@ -118,7 +118,7 @@ export function normalizeCrmQuote(raw: Partial<CrmQuote> & Record<string, unknow
     quoteNum: normalizeQuoteNum(String(raw.quoteNum || raw.quoteNumber || '')),
     rfqId: String(raw.rfqId || ''),
     rfqNum,
-    quotedDate: normalizeCrmDate(String(raw.quotedDate || raw.dateQuoted || raw.dateReceived || ''), year),
+    quotedDate: normalizeCrmDate(String(raw.quotedDate || raw.dateQuoted || ''), year),
     dateReceived: normalizeCrmDate(String(raw.dateReceived || ''), year),
     personId: String(raw.personId || ''),
     organizationId: String(raw.organizationId || raw.companyId || ''),

@@ -5,6 +5,7 @@ import {
   loadProjectsFromSharePoint, loadQuoteBudget, loadQuotesFromSharePoint, loadQuotesRemote,
   saveQuoteBudget,
   upsertQuoteToSharePoint, deleteQuoteFromSharePoint, upsertWipToSharePoint,
+  getMonthBudgetTarget, normalizeQuoteBudget, MONTH_LABELS,
   type CrmQuoteBudget,
 } from './crmStorage';
 import { normalizeCrmQuote } from './crmRfqNormalize';
@@ -239,7 +240,8 @@ const QuoteModal: React.FC<{
     }));
   };
 
-  const canSave = !d.createQuoteXero || quoteNumFilled(d.quoteNum);
+  const quoteNumLocked = quoteNumFilled(initial.quoteNum);
+  const canSave = quoteNumFilled(d.quoteNum) && (d.status !== 'Sent' || !!d.quotedDate);
 
   return (
     <div style={{ position: 'fixed', inset: 0, background: 'rgba(0,0,0,.45)', zIndex: 1000, display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
@@ -343,9 +345,29 @@ const QuoteModal: React.FC<{
             </div>
             <div>
               <label style={ml}>Status</label>
-              <select value={d.status} onChange={e => set('status', e.target.value as CrmQuoteStatus)} style={mi}>
+              <select
+                value={d.status}
+                onChange={e => {
+                  const status = e.target.value as CrmQuoteStatus;
+                  setD(p => ({ ...p, status }));
+                }}
+                style={mi}
+              >
                 {QUOTE_STATUSES.map(s => <option key={s} value={s}>{s}</option>)}
               </select>
+            </div>
+            <div>
+              {d.status === 'Sent' && (
+                <>
+                  <label style={ml}>Date quote sent</label>
+                  <input
+                    type="date"
+                    value={d.quotedDate}
+                    onChange={e => set('quotedDate', e.target.value)}
+                    style={mi}
+                  />
+                </>
+              )}
             </div>
             <div>
               {initial.status === 'Lost' && (
@@ -371,13 +393,14 @@ const QuoteModal: React.FC<{
             </label>
           </div>
           <div style={{ marginBottom: 14 }}>
-            <label style={ml}>Quote # (Xero)</label>
-            <div style={{ display: 'flex', border: `1px solid ${C.borderMd}`, borderRadius: 4, overflow: 'hidden', background: C.surface }}>
+            <label style={ml}>Quote # (Xero) *</label>
+            <div style={{ display: 'flex', border: `1px solid ${C.borderMd}`, borderRadius: 4, overflow: 'hidden', background: quoteNumLocked ? C.thBg : C.surface }}>
               <span style={{ padding: '8px 10px', fontFamily: FF, fontWeight: 700, fontSize: 12.5, color: C.purple, background: C.thBg, borderRight: `1px solid ${C.borderMd}`, whiteSpace: 'nowrap' }}>QU-</span>
               <input
                 value={d.quoteNum.startsWith('QU-') ? d.quoteNum.slice(3) : d.quoteNum}
                 onChange={e => set('quoteNum', 'QU-' + e.target.value.replace(/^QU-/i, ''))}
-                style={{ ...mi, border: 'none', borderRadius: 0 }}
+                readOnly={quoteNumLocked}
+                style={{ ...mi, border: 'none', borderRadius: 0, background: quoteNumLocked ? C.thBg : C.surface, cursor: quoteNumLocked ? 'default' : 'text' }}
                 placeholder="0490"
               />
             </div>
@@ -478,21 +501,40 @@ const BudgetEditModal: React.FC<{
   onSave: (b: CrmQuoteBudget) => void;
   onClose: () => void;
 }> = ({ budget, onSave, onClose }) => {
-  const [b, setB] = React.useState(budget);
+  const [b, setB] = React.useState(() => normalizeQuoteBudget(budget));
+  const setMonthTarget = (idx: number, value: number): void => {
+    setB(p => {
+      const months = [...(p.monthTargets || Array(12).fill(0))];
+      months[idx] = value;
+      return { ...p, monthTargets: months, monthTarget: months[new Date().getMonth()] || 0 };
+    });
+  };
   return (
     <div style={{ position: 'fixed', inset: 0, background: 'rgba(0,0,0,.45)', zIndex: 1001, display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
-      <div style={{ background: C.surface, borderRadius: 8, width: 400, boxShadow: '0 12px 40px rgba(0,0,0,.18)', border: `1px solid ${C.border}` }}>
+      <div style={{ background: C.surface, borderRadius: 8, width: 520, maxHeight: '90vh', overflowY: 'auto', boxShadow: '0 12px 40px rgba(0,0,0,.18)', border: `1px solid ${C.border}` }}>
         <div style={{ padding: '14px 20px', borderBottom: `1px solid ${C.border}`, background: C.thBg }}>
           <span style={{ fontFamily: FF, fontWeight: 700, fontSize: 14, color: C.text }}>Quote Budget Targets</span>
         </div>
         <div style={{ padding: '20px 22px' }}>
-          <div style={{ marginBottom: 14 }}>
+          <div style={{ marginBottom: 18 }}>
             <label style={ml}>Year budget ($)</label>
             <input type="number" min={0} step={1000} value={b.yearTarget || ''} onChange={e => setB(p => ({ ...p, yearTarget: Number(e.target.value) || 0 }))} style={mi} />
           </div>
-          <div>
-            <label style={ml}>Month budget ($)</label>
-            <input type="number" min={0} step={500} value={b.monthTarget || ''} onChange={e => setB(p => ({ ...p, monthTarget: Number(e.target.value) || 0 }))} style={mi} />
+          <label style={{ ...ml, marginBottom: 10 }}>Monthly budgets ($)</label>
+          <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '12px 16px' }}>
+            {MONTH_LABELS.map((label, idx) => (
+              <div key={label}>
+                <label style={{ ...ml, fontSize: 9 }}>{label}</label>
+                <input
+                  type="number"
+                  min={0}
+                  step={500}
+                  value={b.monthTargets?.[idx] || ''}
+                  onChange={e => setMonthTarget(idx, Number(e.target.value) || 0)}
+                  style={mi}
+                />
+              </div>
+            ))}
           </div>
         </div>
         <div style={{ display: 'flex', gap: 10, justifyContent: 'flex-end', padding: '14px 22px', borderTop: `1px solid ${C.border}` }}>
@@ -514,7 +556,7 @@ const CrmQuotesTab: React.FC<{
 }> = ({ spService, persons, companies, seedQuotes, onSeedApplied, onQuoteWon }) => {
   const [quotes, setQuotes] = React.useState<CrmQuote[]>([]);
   const [wonProjects, setWonProjects] = React.useState<CrmProject[]>([]);
-  const [budget, setBudget] = React.useState<CrmQuoteBudget>({ year: new Date().getFullYear(), yearTarget: 0, monthTarget: 0 });
+  const [budget, setBudget] = React.useState<CrmQuoteBudget>(() => normalizeQuoteBudget({ year: new Date().getFullYear(), yearTarget: 0, monthTarget: 0 }));
   const [budgetModal, setBudgetModal] = React.useState(false);
   const [ready, setReady] = React.useState(false);
   const [search, setSearch] = React.useState('');
@@ -598,7 +640,12 @@ const CrmQuotesTab: React.FC<{
 
   const year = new Date().getFullYear();
   const month = new Date().getMonth();
-  const yearQuotes = quotes.filter(q => q.quotedDate.startsWith(String(year)));
+  const quoteListYear = (q: CrmQuote): string => {
+    const ref = q.quotedDate || q.dateReceived;
+    return ref.length >= 4 ? ref.substring(0, 4) : String(year);
+  };
+  const yearQuotes = quotes.filter(q => quoteListYear(q) === String(year));
+  const monthBudgetTarget = getMonthBudgetTarget(budget, month);
 
   const stats = React.useMemo(() => {
     const sent = yearQuotes.filter(q => q.status === 'Sent');
@@ -609,7 +656,7 @@ const CrmQuotesTab: React.FC<{
       .filter(p => new Date(p.wonDate + 'T00:00:00').getMonth() === month)
       .reduce((s, p) => s + (p.projectValue || 0), 0);
     const yearPct = budget.yearTarget > 0 ? Math.round((yearActual / budget.yearTarget) * 100) : null;
-    const monthPct = budget.monthTarget > 0 ? Math.round((monthActual / budget.monthTarget) * 100) : null;
+    const monthPct = monthBudgetTarget > 0 ? Math.round((monthActual / monthBudgetTarget) * 100) : null;
     const won = wonProjects.length;
     const decided = won + lost.length;
     const winRate = decided > 0 ? Math.round((won / decided) * 100) : 0;
@@ -625,7 +672,7 @@ const CrmQuotesTab: React.FC<{
       yearPct,
       monthPct,
     };
-  }, [yearQuotes, wonProjects, budget, month]);
+  }, [yearQuotes, wonProjects, budget, month, monthBudgetTarget]);
 
   const q = search.toLowerCase();
   const filtered = yearQuotes.filter(item => {
@@ -750,7 +797,7 @@ const CrmQuotesTab: React.FC<{
         <BudgetKpiCard
           label="Quote Budget Month"
           actual={stats.monthActual}
-          target={budget.monthTarget}
+          target={monthBudgetTarget}
           pct={stats.monthPct}
           accent="#d97706"
           onClick={() => setBudgetModal(true)}
@@ -809,7 +856,9 @@ const CrmQuotesTab: React.FC<{
                 <td style={{ padding: '10px', borderBottom: `1px solid ${C.border}` }}>
                   <DisciplineBadges discipline={item.discipline} />
                 </td>
-                <td style={{ padding: '10px', fontFamily: FF, fontSize: 12, color: C.sub, borderBottom: `1px solid ${C.border}` }}>{fmtShortDate(item.quotedDate)}</td>
+                <td style={{ padding: '10px', fontFamily: FF, fontSize: 12, color: C.sub, borderBottom: `1px solid ${C.border}` }}>
+                  {item.status === 'Sent' && item.quotedDate ? fmtShortDate(item.quotedDate) : '—'}
+                </td>
                 <td style={{ padding: '10px', fontFamily: FF, fontSize: 12, fontWeight: 600, color: C.text, borderBottom: `1px solid ${C.border}` }}>{item.projectValue ? fmtMoney(item.projectValue) : '—'}</td>
                 <td style={{ padding: '10px', fontFamily: FF, fontSize: 12, fontWeight: 600, color: C.sub, borderBottom: `1px solid ${C.border}` }}>{item.approximateHours ? String(item.approximateHours) : '—'}</td>
                 <td style={{ padding: '10px', borderBottom: `1px solid ${C.border}` }}>
@@ -860,8 +909,9 @@ const CrmQuotesTab: React.FC<{
         <BudgetEditModal
           budget={budget}
           onSave={b => {
-            setBudget(b);
-            void saveQuoteBudget(spService, b);
+            const normalized = normalizeQuoteBudget(b);
+            setBudget(normalized);
+            void saveQuoteBudget(spService, normalized);
             setBudgetModal(false);
           }}
           onClose={() => setBudgetModal(false)}
