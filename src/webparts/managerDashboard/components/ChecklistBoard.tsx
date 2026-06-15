@@ -403,6 +403,8 @@ interface IPersisted {
   projectType: ProjectType;
   role: Role;
   currentPhase: string;
+  /** Milliseconds since epoch — used to avoid stale SharePoint poll overwriting local edits */
+  updatedAt?: number;
 }
 
 // ───────────────────────────── Props ─────────────────────────────
@@ -448,7 +450,10 @@ const ChecklistBoard: React.FC<ChecklistBoardProps> = ({ projects, userDisplayNa
   const [spSyncNote, setSpSyncNote] = React.useState('');
   const stateRef = React.useRef<IPersisted>({ items: {}, overrides: [], projectType: 'steel', role: 'detailer', currentPhase: '01' });
   const lastSaveAtRef = React.useRef(0);
+  const lastLocalEditAtRef = React.useRef(0);
   const saveTimerRef = React.useRef<ReturnType<typeof setTimeout> | null>(null);
+
+  const touchLocalEdit = (): void => { lastLocalEditAtRef.current = Date.now(); };
 
   // Override modal state
   const [ovModal, setOvModal] = React.useState<{ id: string | null; action: C2Action; reason: string }>({ id: null, action: 'cleared', reason: '' });
@@ -471,12 +476,15 @@ const ChecklistBoard: React.FC<ChecklistBoardProps> = ({ projects, userDisplayNa
 
   const pullRemote = React.useCallback(async (projId: string, skipIfRecentSave = true): Promise<void> => {
     if (skipIfRecentSave && Date.now() - lastSaveAtRef.current < 4000) return;
+    if (Date.now() - lastLocalEditAtRef.current < 15000) return;
     try {
       const raw = await loadChecklistJson(spService, projId);
       if (!raw) return;
       const d = JSON.parse(raw) as IPersisted;
+      const local = stateRef.current;
+      if ((d.updatedAt || 0) < (local.updatedAt || 0)) return;
       const remoteStr = JSON.stringify(d);
-      const localStr = JSON.stringify(stateRef.current);
+      const localStr = JSON.stringify(local);
       if (remoteStr !== localStr) applyPersisted(d);
     } catch { /* ignore poll errors */ }
   }, [spService]);
@@ -529,12 +537,24 @@ const ChecklistBoard: React.FC<ChecklistBoardProps> = ({ projects, userDisplayNa
 
   // Keep ref in sync for polling compare
   React.useEffect(() => {
-    stateRef.current = { items, overrides, projectType, role, currentPhase };
+    stateRef.current = {
+      items, overrides, projectType, role, currentPhase,
+      updatedAt: stateRef.current.updatedAt,
+    };
   }, [items, overrides, projectType, role, currentPhase]);
 
   const flushSave = React.useCallback(async (): Promise<void> => {
     if (!selProjId) return;
-    const payload: IPersisted = { items: stateRef.current.items, overrides: stateRef.current.overrides, projectType: stateRef.current.projectType, role: stateRef.current.role, currentPhase: stateRef.current.currentPhase };
+    const updatedAt = Date.now();
+    const payload: IPersisted = {
+      items: stateRef.current.items,
+      overrides: stateRef.current.overrides,
+      projectType: stateRef.current.projectType,
+      role: stateRef.current.role,
+      currentPhase: stateRef.current.currentPhase,
+      updatedAt,
+    };
+    stateRef.current = payload;
     setSyncState('saving');
     const synced = await saveChecklistJson(spService, selProjId, JSON.stringify(payload));
     lastSaveAtRef.current = Date.now();
@@ -616,6 +636,7 @@ const ChecklistBoard: React.FC<ChecklistBoardProps> = ({ projects, userDisplayNa
     const st = items[id] || {};
     if (st.c2 === 'cleared' || st.c2 === 'na') { toast(`Check 2 already actioned — checker must clear the status first.`); return; }
     if (st.override) { toast('Item cleared by PM override — contact PM to reset.'); return; }
+    touchLocalEdit();
     setItems(prev => {
       const cur = prev[id] || {};
       if (cur.c1) return { ...prev, [id]: { ...cur, c1: false, c1By: undefined, c1At: undefined } };
@@ -630,6 +651,7 @@ const ChecklistBoard: React.FC<ChecklistBoardProps> = ({ projects, userDisplayNa
     if (st.override) {
       if (role === 'pm') {
         if (window.confirm('Revert this PM override? The item will return to its original state.')) {
+          touchLocalEdit();
           setItems(prev => { const p = { ...prev }; delete p[id]; return p; });
           setOverrides(prev => prev.filter(o => o.itemId !== id));
           toast('Override reverted.');
@@ -642,6 +664,7 @@ const ChecklistBoard: React.FC<ChecklistBoardProps> = ({ projects, userDisplayNa
 
     // click same button → clear to neutral
     if (st.c2 === action) {
+      touchLocalEdit();
       setItems(prev => ({ ...prev, [id]: { ...(prev[id] || {}), c2: null, c2By: undefined, c2At: undefined } }));
       return;
     }
@@ -656,6 +679,7 @@ const ChecklistBoard: React.FC<ChecklistBoardProps> = ({ projects, userDisplayNa
       return;
     }
 
+    touchLocalEdit();
     setItems(prev => ({ ...prev, [id]: { ...(prev[id] || {}), c2: action, c2By: users[role], c2At: nowString() } }));
     if (action === 'incorrect') toast('Item flagged as Incorrect — detailer will be notified to fix.');
   };
@@ -666,6 +690,7 @@ const ChecklistBoard: React.FC<ChecklistBoardProps> = ({ projects, userDisplayNa
     if (!meta) return;
     const now = nowString();
     const action = ovModal.action;
+    touchLocalEdit();
     setItems(prev => {
       if (action === 'cleared') {
         return { ...prev, [ovModal.id!]: { c1: false, c2: null, override: true, overrideBy: users.pm, overrideAt: now, overrideReason: ovModal.reason } };
@@ -680,6 +705,7 @@ const ChecklistBoard: React.FC<ChecklistBoardProps> = ({ projects, userDisplayNa
 
   const resetAll = (): void => {
     if (!window.confirm('Reset all ticks and overrides on this project? This cannot be undone.')) return;
+    touchLocalEdit();
     setItems({});
     setOverrides([]);
     toast('All ticks cleared.');
@@ -767,7 +793,7 @@ const ChecklistBoard: React.FC<ChecklistBoardProps> = ({ projects, userDisplayNa
               <span style={{ fontSize: 10, color: 'var(--t4)', letterSpacing: '.08em', fontWeight: 700, textTransform: 'uppercase' }}>Project Type</span>
               <div style={{ display: 'flex', gap: 3 }}>
                 {(['steel', 'concrete', 'both'] as ProjectType[]).map(t => (
-                  <button key={t} onClick={() => { setProjectType(t); const firstWithItems = CHECKLIST.filter(p => p.sections.some(s => t === 'both' || s.type === 'both' || s.type === t))[0]; if (firstWithItems && !CHECKLIST.filter(p => p.id === currentPhase)[0].sections.some(s => t === 'both' || s.type === 'both' || s.type === t)) setCurrentPhase(firstWithItems.id); }} style={{
+                  <button key={t} onClick={() => { touchLocalEdit(); setProjectType(t); const firstWithItems = CHECKLIST.filter(p => p.sections.some(s => t === 'both' || s.type === 'both' || s.type === t))[0]; if (firstWithItems && !CHECKLIST.filter(p => p.id === currentPhase)[0].sections.some(s => t === 'both' || s.type === 'both' || s.type === t)) setCurrentPhase(firstWithItems.id); }} style={{
                     fontFamily: 'Montserrat', fontSize: 12, fontWeight: 600, padding: '5px 11px', borderRadius: 5, cursor: 'pointer',
                     border: '1px solid ' + (projectType === t ? 'var(--t1)' : 'transparent'),
                     background: projectType === t ? 'var(--t1)' : 'transparent',
@@ -783,7 +809,7 @@ const ChecklistBoard: React.FC<ChecklistBoardProps> = ({ projects, userDisplayNa
               <span style={{ fontSize: 10, color: 'var(--t4)', letterSpacing: '.08em', fontWeight: 700, textTransform: 'uppercase' }}>View as</span>
               <div style={{ display: 'flex', gap: 3 }}>
                 {(['detailer', 'checker', 'pm'] as Role[]).map(r => (
-                  <button key={r} onClick={() => setRole(r)} style={{
+                  <button key={r} onClick={() => { touchLocalEdit(); setRole(r); }} style={{
                     fontFamily: 'Montserrat', fontSize: 12, fontWeight: 600, padding: '5px 11px', borderRadius: 5, cursor: 'pointer',
                     border: '1px solid ' + (role === r ? 'var(--t1)' : 'transparent'),
                     background: role === r ? 'var(--t1)' : 'transparent',
@@ -830,7 +856,7 @@ const ChecklistBoard: React.FC<ChecklistBoardProps> = ({ projects, userDisplayNa
               const pillBg = pct === 100 && pItems.length > 0 ? 'rgba(42,158,42,.15)' : pct > 0 ? 'rgba(212,136,10,.15)' : 'var(--s2)';
               const pillColor = pct === 100 && pItems.length > 0 ? '#157a15' : pct > 0 ? '#a06808' : 'var(--t4)';
               return (
-                <button key={phase.id} onClick={() => setCurrentPhase(phase.id)} style={{
+                <button key={phase.id} onClick={() => { touchLocalEdit(); setCurrentPhase(phase.id); }} style={{
                   padding: '9px 14px', fontSize: 11, letterSpacing: '.05em', fontFamily: 'Montserrat',
                   fontWeight: active ? 700 : 600,
                   color: active ? 'var(--t1)' : 'var(--t4)',
