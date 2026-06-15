@@ -6,6 +6,16 @@ export const checklistLocalKey = (projId: string): string => `3edge_checklist_v1
 export const checklistSpKey = (projId: string): string =>
   `checklist_v1_${projId.replace(/[^a-zA-Z0-9_-]/g, '_')}`;
 
+const checklistUpdatedAt = (json: string | null): number => {
+  if (!json) return 0;
+  try {
+    const d = JSON.parse(json) as { updatedAt?: number };
+    return typeof d.updatedAt === 'number' ? d.updatedAt : 0;
+  } catch {
+    return 0;
+  }
+};
+
 export async function loadChecklistJson(sp: SharePointService, projId: string): Promise<string | null> {
   let fromLs: string | null = null;
   try {
@@ -17,6 +27,9 @@ export async function loadChecklistJson(sp: SharePointService, projId: string): 
     fromSp = await sp.getSettingChunks(checklistSpKey(projId));
   } catch { /* ignore */ }
 
+  if (fromSp && fromLs) {
+    return checklistUpdatedAt(fromLs) > checklistUpdatedAt(fromSp) ? fromLs : fromSp;
+  }
   if (fromSp) return fromSp;
   return fromLs;
 }
