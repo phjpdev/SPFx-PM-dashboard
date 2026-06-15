@@ -74,7 +74,7 @@ const rfqToQuote = (rfq: CrmRfq, quoteNum: string): CrmQuote => ({
   quoteNum,
   rfqId: rfq.id,
   rfqNum: rfq.rfqNum,
-  quotedDate: todayIso(),
+  quotedDate: '',
   dateReceived: rfq.dateReceived,
   personId: rfq.personId,
   organizationId: rfq.organizationId,

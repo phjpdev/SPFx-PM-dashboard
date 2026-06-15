@@ -5,8 +5,30 @@ import { normalizeCrmQuote, normalizeCrmRfq } from './crmRfqNormalize';
 export interface CrmQuoteBudget {
   year: number;
   yearTarget: number;
+  /** @deprecated use monthTargets — kept for legacy saved budgets */
   monthTarget: number;
+  /** Jan–Dec budget targets ($), index 0 = January */
+  monthTargets?: number[];
 }
+
+const MONTH_LABELS = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'];
+
+export function normalizeQuoteBudget(raw: CrmQuoteBudget | null | undefined): CrmQuoteBudget {
+  const year = raw?.year || new Date().getFullYear();
+  const yearTarget = raw?.yearTarget || 0;
+  const legacy = raw?.monthTarget || 0;
+  const monthTargets = raw?.monthTargets?.length === 12
+    ? [...raw.monthTargets]
+    : Array(12).fill(legacy);
+  return { year, yearTarget, monthTarget: monthTargets[new Date().getMonth()] || 0, monthTargets };
+}
+
+export function getMonthBudgetTarget(budget: CrmQuoteBudget, monthIndex: number): number {
+  const normalized = normalizeQuoteBudget(budget);
+  return normalized.monthTargets?.[monthIndex] ?? 0;
+}
+
+export { MONTH_LABELS };
 
 /**
  * Kept for API compatibility with CrmBoard — the revision field is used to
@@ -242,27 +264,25 @@ export async function saveProjectsToSharePoint(sp: SharePointService, projects: 
 
 // ── Quote Budget ───────────────────────────────────────────────────────────
 
-const defaultQuoteBudget = (): CrmQuoteBudget => ({
-  year: new Date().getFullYear(),
-  yearTarget: 0,
-  monthTarget: 0,
-});
+const defaultQuoteBudget = (): CrmQuoteBudget =>
+  normalizeQuoteBudget({ year: new Date().getFullYear(), yearTarget: 0, monthTarget: 0 });
 
 export async function loadQuoteBudget(sp: SharePointService): Promise<CrmQuoteBudget> {
   const local = loadLS<CrmQuoteBudget | null>(LS_QUOTE_BUDGET, null);
   try {
     const json = await sp.getSettingChunks(CRM_SP_QUOTE_BUDGET);
-    if (!json) return local ?? defaultQuoteBudget();
+    if (!json) return normalizeQuoteBudget(local ?? undefined);
     const remote = JSON.parse(json) as CrmQuoteBudget;
-    return remote.year ? remote : (local ?? defaultQuoteBudget());
+    return remote.year ? normalizeQuoteBudget(remote) : normalizeQuoteBudget(local ?? undefined);
   } catch {
-    return local ?? defaultQuoteBudget();
+    return normalizeQuoteBudget(local ?? undefined);
   }
 }
 
 export async function saveQuoteBudget(sp: SharePointService, budget: CrmQuoteBudget): Promise<void> {
-  try { localStorage.setItem(LS_QUOTE_BUDGET, JSON.stringify(budget)); } catch { /* ignore */ }
-  try { await sp.setSettingChunks(CRM_SP_QUOTE_BUDGET, JSON.stringify(budget)); } catch { /* ignore */ }
+  const normalized = normalizeQuoteBudget(budget);
+  try { localStorage.setItem(LS_QUOTE_BUDGET, JSON.stringify(normalized)); } catch { /* ignore */ }
+  try { await sp.setSettingChunks(CRM_SP_QUOTE_BUDGET, JSON.stringify(normalized)); } catch { /* ignore */ }
 }
 
 // ── Per-record person / company operations ─────────────────────────────────
