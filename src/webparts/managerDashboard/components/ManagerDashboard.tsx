@@ -1543,7 +1543,7 @@ const ManagerDashboard: React.FC<IManagerDashboardProps> = (props) => {
   const [crmLockRemain, setCrmLockRemain] = React.useState(0);
   React.useEffect(() => {
     if (!crmUnlocked) return;
-    const t = setTimeout(() => setCrmUnlocked(false), 15 * 60 * 1000);
+    const t = setTimeout(() => setCrmUnlocked(false), 30 * 60 * 1000);
     return () => clearTimeout(t);
   }, [crmUnlocked]);
   React.useEffect(() => {
