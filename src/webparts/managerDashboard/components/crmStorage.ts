@@ -11,6 +11,15 @@ export interface CrmQuoteBudget {
   monthTargets?: number[];
 }
 
+export interface CrmQuoteBudgetYearData {
+  yearTarget: number;
+  monthTargets: number[];
+}
+
+export interface CrmQuoteBudgetStore {
+  byYear: Record<string, CrmQuoteBudgetYearData>;
+}
+
 const MONTH_LABELS = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'];
 
 export function normalizeQuoteBudget(raw: CrmQuoteBudget | null | undefined): CrmQuoteBudget {
@@ -26,6 +35,39 @@ export function normalizeQuoteBudget(raw: CrmQuoteBudget | null | undefined): Cr
 export function getMonthBudgetTarget(budget: CrmQuoteBudget, monthIndex: number): number {
   const normalized = normalizeQuoteBudget(budget);
   return normalized.monthTargets?.[monthIndex] ?? 0;
+}
+
+export function normalizeQuoteBudgetStore(raw: unknown): CrmQuoteBudgetStore {
+  if (raw && typeof raw === 'object' && 'byYear' in raw) {
+    const store = raw as CrmQuoteBudgetStore;
+    return { byYear: { ...store.byYear } };
+  }
+  const legacy = raw as CrmQuoteBudget | null | undefined;
+  if (legacy?.year) {
+    const n = normalizeQuoteBudget(legacy);
+    return {
+      byYear: {
+        [String(n.year)]: { yearTarget: n.yearTarget, monthTargets: n.monthTargets || Array(12).fill(0) },
+      },
+    };
+  }
+  return { byYear: {} };
+}
+
+export function getQuoteBudgetForYear(store: CrmQuoteBudgetStore, year: number): CrmQuoteBudget {
+  const data = store.byYear[String(year)];
+  if (!data) return normalizeQuoteBudget({ year, yearTarget: 0, monthTarget: 0 });
+  return normalizeQuoteBudget({ year, yearTarget: data.yearTarget, monthTarget: 0, monthTargets: data.monthTargets });
+}
+
+export function setQuoteBudgetForYear(store: CrmQuoteBudgetStore, budget: CrmQuoteBudget): CrmQuoteBudgetStore {
+  const n = normalizeQuoteBudget(budget);
+  return {
+    byYear: {
+      ...store.byYear,
+      [String(n.year)]: { yearTarget: n.yearTarget, monthTargets: n.monthTargets || Array(12).fill(0) },
+    },
+  };
 }
 
 export { MONTH_LABELS };
@@ -264,23 +306,21 @@ export async function saveProjectsToSharePoint(sp: SharePointService, projects: 
 
 // ── Quote Budget ───────────────────────────────────────────────────────────
 
-const defaultQuoteBudget = (): CrmQuoteBudget =>
-  normalizeQuoteBudget({ year: new Date().getFullYear(), yearTarget: 0, monthTarget: 0 });
+const defaultQuoteBudgetStore = (): CrmQuoteBudgetStore => ({ byYear: {} });
 
-export async function loadQuoteBudget(sp: SharePointService): Promise<CrmQuoteBudget> {
-  const local = loadLS<CrmQuoteBudget | null>(LS_QUOTE_BUDGET, null);
+export async function loadQuoteBudget(sp: SharePointService): Promise<CrmQuoteBudgetStore> {
+  const local = loadLS<CrmQuoteBudgetStore | CrmQuoteBudget | null>(LS_QUOTE_BUDGET, null);
   try {
     const json = await sp.getSettingChunks(CRM_SP_QUOTE_BUDGET);
-    if (!json) return normalizeQuoteBudget(local ?? undefined);
-    const remote = JSON.parse(json) as CrmQuoteBudget;
-    return remote.year ? normalizeQuoteBudget(remote) : normalizeQuoteBudget(local ?? undefined);
+    if (!json) return normalizeQuoteBudgetStore(local ?? defaultQuoteBudgetStore());
+    return normalizeQuoteBudgetStore(JSON.parse(json));
   } catch {
-    return normalizeQuoteBudget(local ?? undefined);
+    return normalizeQuoteBudgetStore(local ?? defaultQuoteBudgetStore());
   }
 }
 
-export async function saveQuoteBudget(sp: SharePointService, budget: CrmQuoteBudget): Promise<void> {
-  const normalized = normalizeQuoteBudget(budget);
+export async function saveQuoteBudget(sp: SharePointService, store: CrmQuoteBudgetStore): Promise<void> {
+  const normalized = normalizeQuoteBudgetStore(store);
   try { localStorage.setItem(LS_QUOTE_BUDGET, JSON.stringify(normalized)); } catch { /* ignore */ }
   try { await sp.setSettingChunks(CRM_SP_QUOTE_BUDGET, JSON.stringify(normalized)); } catch { /* ignore */ }
 }

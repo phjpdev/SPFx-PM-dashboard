@@ -5,8 +5,9 @@ import {
   loadProjectsFromSharePoint, loadQuoteBudget, loadQuotesFromSharePoint, loadQuotesRemote,
   saveQuoteBudget,
   upsertQuoteToSharePoint, deleteQuoteFromSharePoint, upsertWipToSharePoint,
-  getMonthBudgetTarget, normalizeQuoteBudget, MONTH_LABELS,
-  type CrmQuoteBudget,
+  getMonthBudgetTarget, getQuoteBudgetForYear, normalizeQuoteBudget, normalizeQuoteBudgetStore,
+  setQuoteBudgetForYear, MONTH_LABELS,
+  type CrmQuoteBudget, type CrmQuoteBudgetStore,
 } from './crmStorage';
 import { normalizeCrmQuote } from './crmRfqNormalize';
 import { nextProjNum, quoteToCrmProject, quoteToIProject } from './crmProjectHelpers';
@@ -74,6 +75,43 @@ const ensureQuPrefix = (v: string): string => {
 const quoteNumFilled = (v: string): boolean => {
   const t = v.trim();
   return t.length > 0 && t !== 'QU-';
+};
+
+const csvCell = (v: string | number): string => {
+  const s = String(v ?? '');
+  return /[",\n]/.test(s) ? `"${s.replace(/"/g, '""')}"` : s;
+};
+
+const exportQuotesCsv = (
+  rows: CrmQuote[],
+  yr: number,
+  companyName: (id: string) => string,
+  personName: (id: string) => string,
+): void => {
+  const headers = ['Quote #', 'RFQ #', 'Project', 'Company', 'Contact', 'Type', 'Date Sent', 'Est Value', 'Hours Est', 'Status', 'Owner', 'Lost Reason'];
+  const lines = [
+    headers.join(','),
+    ...rows.map(item => [
+      csvCell(item.quoteNum),
+      csvCell(item.rfqNum),
+      csvCell(item.projectTitle),
+      csvCell(companyName(item.organizationId)),
+      csvCell(personName(item.personId)),
+      csvCell(item.discipline),
+      csvCell(item.quotedDate),
+      csvCell(item.projectValue || ''),
+      csvCell(item.approximateHours || ''),
+      csvCell(item.status),
+      csvCell(item.assignedTo),
+      csvCell(item.lostReason || ''),
+    ].join(',')),
+  ];
+  const blob = new Blob([lines.join('\n')], { type: 'text/csv;charset=utf-8;' });
+  const a = document.createElement('a');
+  a.href = URL.createObjectURL(blob);
+  a.download = `CRM-Quotes-${yr}.csv`;
+  a.click();
+  URL.revokeObjectURL(a.href);
 };
 
 const loadQuotesLocal = (): CrmQuote[] => {
@@ -357,7 +395,7 @@ const QuoteModal: React.FC<{
               </select>
             </div>
             <div>
-              {d.status === 'Sent' && (
+              {(d.status === 'Sent' || d.status === 'Lost') && (
                 <>
                   <label style={ml}>Date quote sent</label>
                   <input
@@ -497,18 +535,40 @@ const BudgetKpiCard: React.FC<{
 );
 
 const BudgetEditModal: React.FC<{
-  budget: CrmQuoteBudget;
-  onSave: (b: CrmQuoteBudget) => void;
+  budgetStore: CrmQuoteBudgetStore;
+  editYear: number;
+  yearOptions: number[];
+  onSave: (store: CrmQuoteBudgetStore) => void;
   onClose: () => void;
-}> = ({ budget, onSave, onClose }) => {
-  const [b, setB] = React.useState(() => normalizeQuoteBudget(budget));
+}> = ({ budgetStore, editYear, yearOptions, onSave, onClose }) => {
+  const [year, setYear] = React.useState(editYear);
+  const [b, setB] = React.useState(() => getQuoteBudgetForYear(budgetStore, editYear));
+
+  React.useEffect(() => {
+    setYear(editYear);
+    setB(getQuoteBudgetForYear(budgetStore, editYear));
+  }, [budgetStore, editYear]);
+
+  const onYearChange = (y: number): void => {
+    setYear(y);
+    setB(getQuoteBudgetForYear(budgetStore, y));
+  };
+
   const setMonthTarget = (idx: number, value: number): void => {
     setB(p => {
       const months = [...(p.monthTargets || Array(12).fill(0))];
       months[idx] = value;
-      return { ...p, monthTargets: months, monthTarget: months[new Date().getMonth()] || 0 };
+      return { ...p, year, monthTargets: months, monthTarget: months[new Date().getMonth()] || 0 };
     });
   };
+
+  const years = React.useMemo(() => {
+    const set = new Set(yearOptions);
+    set.add(year);
+    set.add(new Date().getFullYear());
+    return Array.from(set).sort((a, b) => b - a);
+  }, [yearOptions, year]);
+
   return (
     <div style={{ position: 'fixed', inset: 0, background: 'rgba(0,0,0,.45)', zIndex: 1001, display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
       <div style={{ background: C.surface, borderRadius: 8, width: 520, maxHeight: '90vh', overflowY: 'auto', boxShadow: '0 12px 40px rgba(0,0,0,.18)', border: `1px solid ${C.border}` }}>
@@ -517,8 +577,14 @@ const BudgetEditModal: React.FC<{
         </div>
         <div style={{ padding: '20px 22px' }}>
           <div style={{ marginBottom: 18 }}>
+            <label style={ml}>Budget year</label>
+            <select value={year} onChange={e => onYearChange(Number(e.target.value))} style={mi}>
+              {years.map(y => <option key={y} value={y}>{y}</option>)}
+            </select>
+          </div>
+          <div style={{ marginBottom: 18 }}>
             <label style={ml}>Year budget ($)</label>
-            <input type="number" min={0} step={1000} value={b.yearTarget || ''} onChange={e => setB(p => ({ ...p, yearTarget: Number(e.target.value) || 0 }))} style={mi} />
+            <input type="number" min={0} step={1000} value={b.yearTarget || ''} onChange={e => setB(p => ({ ...p, year, yearTarget: Number(e.target.value) || 0 }))} style={mi} />
           </div>
           <label style={{ ...ml, marginBottom: 10 }}>Monthly budgets ($)</label>
           <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '12px 16px' }}>
@@ -539,7 +605,7 @@ const BudgetEditModal: React.FC<{
         </div>
         <div style={{ display: 'flex', gap: 10, justifyContent: 'flex-end', padding: '14px 22px', borderTop: `1px solid ${C.border}` }}>
           <button onClick={onClose} style={{ padding: '8px 20px', borderRadius: 4, border: `1px solid ${C.borderMd}`, background: 'transparent', color: C.sub, fontFamily: FF, fontSize: 12, cursor: 'pointer' }}>Cancel</button>
-          <button onClick={() => onSave({ ...b, year: new Date().getFullYear() })} style={{ padding: '8px 20px', borderRadius: 4, border: 'none', background: C.green, color: '#fff', fontFamily: FF, fontWeight: 700, fontSize: 12, cursor: 'pointer' }}>Save</button>
+          <button onClick={() => onSave(setQuoteBudgetForYear(budgetStore, { ...b, year }))} style={{ padding: '8px 20px', borderRadius: 4, border: 'none', background: C.green, color: '#fff', fontFamily: FF, fontWeight: 700, fontSize: 12, cursor: 'pointer' }}>Save</button>
         </div>
       </div>
     </div>
@@ -556,7 +622,8 @@ const CrmQuotesTab: React.FC<{
 }> = ({ spService, persons, companies, seedQuotes, onSeedApplied, onQuoteWon }) => {
   const [quotes, setQuotes] = React.useState<CrmQuote[]>([]);
   const [wonProjects, setWonProjects] = React.useState<CrmProject[]>([]);
-  const [budget, setBudget] = React.useState<CrmQuoteBudget>(() => normalizeQuoteBudget({ year: new Date().getFullYear(), yearTarget: 0, monthTarget: 0 }));
+  const [budgetStore, setBudgetStore] = React.useState<CrmQuoteBudgetStore>(() => normalizeQuoteBudgetStore(undefined));
+  const [selectedYear, setSelectedYear] = React.useState(() => new Date().getFullYear());
   const [budgetModal, setBudgetModal] = React.useState(false);
   const [ready, setReady] = React.useState(false);
   const [search, setSearch] = React.useState('');
@@ -579,8 +646,7 @@ const CrmQuotesTab: React.FC<{
         }
       }
       const projs = await loadProjectsFromSharePoint(spService);
-      const yr = new Date().getFullYear();
-      setWonProjects(projs.filter(p => p.wonDate.startsWith(String(yr))));
+      setWonProjects(projs);
     } catch {
       setQuotes(loadQuotesLocal().map(normalizeQuote));
     }
@@ -595,9 +661,8 @@ const CrmQuotesTab: React.FC<{
         loadProjectsFromSharePoint(spService),
         loadQuoteBudget(spService),
       ]).then(([projs, b]) => {
-        const yr = new Date().getFullYear();
-        setWonProjects(projs.filter(p => p.wonDate.startsWith(String(yr))));
-        setBudget(b);
+        setWonProjects(projs);
+        setBudgetStore(b);
       });
       return;
     }
@@ -611,9 +676,8 @@ const CrmQuotesTab: React.FC<{
         ]);
         if (!cancelled) {
           setQuotes(data.map(normalizeQuote));
-          const yr = new Date().getFullYear();
-          setWonProjects(projs.filter(p => p.wonDate.startsWith(String(yr))));
-          setBudget(b);
+          setWonProjects(projs);
+          setBudgetStore(b);
         }
       } catch {
         if (!cancelled) setQuotes(loadQuotesLocal().map(normalizeQuote));
@@ -638,26 +702,48 @@ const CrmQuotesTab: React.FC<{
   const companyName = (id: string): string => companies.find(c => c.id === id)?.name || '—';
   const personName = (id: string): string => persons.find(p => p.id === id)?.name || '—';
 
-  const year = new Date().getFullYear();
-  const month = new Date().getMonth();
   const quoteListYear = (q: CrmQuote): string => {
     const ref = q.quotedDate || q.dateReceived;
-    return ref.length >= 4 ? ref.substring(0, 4) : String(year);
+    return ref.length >= 4 ? ref.substring(0, 4) : String(selectedYear);
   };
+
+  const yearOptions = React.useMemo(() => {
+    const yrs = new Set<number>();
+    yrs.add(new Date().getFullYear());
+    yrs.add(selectedYear);
+    quotes.forEach(q => {
+      const y = Number(quoteListYear(q));
+      if (!isNaN(y) && y > 2000) yrs.add(y);
+    });
+    wonProjects.forEach(p => {
+      if (p.wonDate?.length >= 4) yrs.add(Number(p.wonDate.substring(0, 4)));
+    });
+    Object.keys(budgetStore.byYear).forEach(y => {
+      const n = Number(y);
+      if (!isNaN(n)) yrs.add(n);
+    });
+    return Array.from(yrs).sort((a, b) => b - a);
+  }, [quotes, wonProjects, budgetStore, selectedYear]);
+
+  const year = selectedYear;
+  const calendarYear = new Date().getFullYear();
+  const month = year === calendarYear ? new Date().getMonth() : 0;
+  const budget = getQuoteBudgetForYear(budgetStore, year);
   const yearQuotes = quotes.filter(q => quoteListYear(q) === String(year));
+  const wonForYear = wonProjects.filter(p => p.wonDate.startsWith(String(year)));
   const monthBudgetTarget = getMonthBudgetTarget(budget, month);
 
   const stats = React.useMemo(() => {
     const sent = yearQuotes.filter(q => q.status === 'Sent');
     const lost = yearQuotes.filter(q => q.status === 'Lost');
     const totalHours = yearQuotes.reduce((s, q) => s + (q.approximateHours || 0), 0);
-    const yearActual = wonProjects.reduce((s, p) => s + (p.projectValue || 0), 0);
-    const monthActual = wonProjects
+    const yearActual = wonForYear.reduce((s, p) => s + (p.projectValue || 0), 0);
+    const monthActual = wonForYear
       .filter(p => new Date(p.wonDate + 'T00:00:00').getMonth() === month)
       .reduce((s, p) => s + (p.projectValue || 0), 0);
     const yearPct = budget.yearTarget > 0 ? Math.round((yearActual / budget.yearTarget) * 100) : null;
     const monthPct = monthBudgetTarget > 0 ? Math.round((monthActual / monthBudgetTarget) * 100) : null;
-    const won = wonProjects.length;
+    const won = wonForYear.length;
     const decided = won + lost.length;
     const winRate = decided > 0 ? Math.round((won / decided) * 100) : 0;
     return {
@@ -672,7 +758,7 @@ const CrmQuotesTab: React.FC<{
       yearPct,
       monthPct,
     };
-  }, [yearQuotes, wonProjects, budget, month, monthBudgetTarget]);
+  }, [yearQuotes, wonForYear, budget, month, monthBudgetTarget]);
 
   const q = search.toLowerCase();
   const filtered = yearQuotes.filter(item => {
@@ -749,8 +835,7 @@ const CrmQuotesTab: React.FC<{
         persistQuotes(nextQuotes);
         try { localStorage.setItem(LS_PROJECTS, JSON.stringify(nextProjects)); } catch { /* ignore */ }
         void upsertWipToSharePoint(spService, crmProject).catch(() => undefined);
-        const yr = new Date().getFullYear();
-        setWonProjects(nextProjects.filter(p => p.wonDate.startsWith(String(yr))));
+        setWonProjects(nextProjects);
         onQuoteWon?.(nextProjects, nextQuotes);
       } catch {
         alert('Could not create project. Please try again.');
@@ -806,6 +891,13 @@ const CrmQuotesTab: React.FC<{
       </div>
 
       <div style={{ display: 'flex', alignItems: 'center', gap: 10, flexWrap: 'nowrap', paddingBottom: 12 }}>
+        <select
+          value={selectedYear}
+          onChange={e => setSelectedYear(Number(e.target.value))}
+          style={{ padding: '7px 10px', borderRadius: 4, border: `1px solid ${C.borderMd}`, background: C.surface, fontFamily: FF, fontSize: 12, color: C.text, width: 90, flexShrink: 0, boxSizing: 'border-box' }}
+        >
+          {yearOptions.map(y => <option key={y} value={y}>{y}</option>)}
+        </select>
         <input
           value={search}
           onChange={e => setSearch(e.target.value)}
@@ -820,14 +912,21 @@ const CrmQuotesTab: React.FC<{
           <option value="all">All statuses</option>
           {QUOTE_STATUSES.map(s => <option key={s} value={s}>{s}</option>)}
         </select>
+        <div style={{ flex: 1 }} />
+        <button
+          onClick={() => exportQuotesCsv(yearQuotes, year, companyName, personName)}
+          style={{ padding: '7px 16px', borderRadius: 4, border: `1px solid ${C.borderMd}`, background: C.surface, fontFamily: FF, fontWeight: 700, fontSize: 12, color: C.text, cursor: 'pointer', flexShrink: 0, whiteSpace: 'nowrap' }}
+        >
+          Export All
+        </button>
       </div>
 
       <div style={{ background: C.surface, border: `1px solid ${C.border}`, borderRadius: '0 0 8px 8px', overflowX: 'auto' }}>
         <table style={{ width: '100%', borderCollapse: 'collapse', minWidth: 960 }}>
           <thead>
             <tr>
-              {['Quote #', 'RFQ #', 'Project', 'Company', 'Contact', 'Type', 'Quoted', 'Est Value', 'Hours Est', 'Status', 'Owner', 'Actions'].map(h => (
-                <th key={h} style={{ padding: '9px 10px', textAlign: 'left', fontFamily: FF, fontWeight: 700, fontSize: 10, letterSpacing: '.06em', textTransform: 'uppercase', color: C.sub, background: C.thBg, borderBottom: `2px solid ${C.borderMd}`, whiteSpace: 'nowrap' }}>
+              {['Quote #', 'RFQ #', 'Project', 'Company', 'Contact', 'Type', 'Quoted', 'Est Value', 'Hours Est', 'Status', 'Owner', 'Actions'].map((h, i) => (
+                <th key={h} style={{ padding: '9px 10px', textAlign: 'left', fontFamily: FF, fontWeight: 700, fontSize: 10, letterSpacing: '.06em', textTransform: 'uppercase', color: C.sub, background: C.thBg, borderBottom: `2px solid ${C.borderMd}`, whiteSpace: 'nowrap', ...(i < 2 ? { minWidth: 72 } : {}) }}>
                   {h}
                 </th>
               ))}
@@ -848,16 +947,16 @@ const CrmQuotesTab: React.FC<{
                 onMouseEnter={e => { (e.currentTarget as HTMLTableRowElement).style.background = C.rowHover; }}
                 onMouseLeave={e => { (e.currentTarget as HTMLTableRowElement).style.background = 'transparent'; }}
               >
-                <td style={{ padding: '10px', fontFamily: FF, fontSize: 12, fontWeight: 700, color: C.purple, borderBottom: `1px solid ${C.border}` }}>{item.quoteNum || '—'}</td>
-                <td style={{ padding: '10px', fontFamily: FF, fontSize: 12, fontWeight: 600, color: '#0d9488', borderBottom: `1px solid ${C.border}` }}>{item.rfqNum}</td>
+                <td style={{ padding: '10px', fontFamily: FF, fontSize: 12, fontWeight: 700, color: C.purple, borderBottom: `1px solid ${C.border}`, whiteSpace: 'nowrap' }}>{item.quoteNum || '—'}</td>
+                <td style={{ padding: '10px', fontFamily: FF, fontSize: 12, fontWeight: 600, color: '#0d9488', borderBottom: `1px solid ${C.border}`, whiteSpace: 'nowrap' }}>{item.rfqNum}</td>
                 <td style={{ padding: '10px', fontFamily: FF, fontSize: 12, fontWeight: 600, color: C.text, borderBottom: `1px solid ${C.border}` }}>{item.projectTitle || '—'}</td>
                 <td style={{ padding: '10px', fontFamily: FF, fontSize: 12, color: C.sub, borderBottom: `1px solid ${C.border}` }}>{companyName(item.organizationId)}</td>
                 <td style={{ padding: '10px', fontFamily: FF, fontSize: 12, color: C.sub, borderBottom: `1px solid ${C.border}` }}>{personName(item.personId)}</td>
                 <td style={{ padding: '10px', borderBottom: `1px solid ${C.border}` }}>
                   <DisciplineBadges discipline={item.discipline} />
                 </td>
-                <td style={{ padding: '10px', fontFamily: FF, fontSize: 12, color: C.sub, borderBottom: `1px solid ${C.border}` }}>
-                  {item.status === 'Sent' && item.quotedDate ? fmtShortDate(item.quotedDate) : '—'}
+                <td style={{ padding: '10px', fontFamily: FF, fontSize: 12, color: C.sub, borderBottom: `1px solid ${C.border}`, whiteSpace: 'nowrap' }}>
+                  {item.quotedDate && (item.status === 'Sent' || item.status === 'Lost') ? fmtShortDate(item.quotedDate) : '—'}
                 </td>
                 <td style={{ padding: '10px', fontFamily: FF, fontSize: 12, fontWeight: 600, color: C.text, borderBottom: `1px solid ${C.border}` }}>{item.projectValue ? fmtMoney(item.projectValue) : '—'}</td>
                 <td style={{ padding: '10px', fontFamily: FF, fontSize: 12, fontWeight: 600, color: C.sub, borderBottom: `1px solid ${C.border}` }}>{item.approximateHours ? String(item.approximateHours) : '—'}</td>
@@ -907,10 +1006,12 @@ const CrmQuotesTab: React.FC<{
       )}
       {budgetModal && (
         <BudgetEditModal
-          budget={budget}
-          onSave={b => {
-            const normalized = normalizeQuoteBudget(b);
-            setBudget(normalized);
+          budgetStore={budgetStore}
+          editYear={selectedYear}
+          yearOptions={yearOptions}
+          onSave={store => {
+            const normalized = normalizeQuoteBudgetStore(store);
+            setBudgetStore(normalized);
             void saveQuoteBudget(spService, normalized);
             setBudgetModal(false);
           }}
