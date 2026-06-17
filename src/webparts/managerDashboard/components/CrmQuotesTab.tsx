@@ -20,11 +20,11 @@ const LS_PROJECTS = '3edge-crm-projects';
 
 const C = {
   bg: '#f7f8fa', surface: '#ffffff', border: '#e2e5ea', borderMd: '#cdd1d9',
-  text: '#1a2030', sub: '#4a5568', muted: '#8a97a8', green: '#2a9e2a',
+  text: '#1a2030', sub: '#4a5568', cell: '#364152', muted: '#8a97a8', green: '#2a9e2a',
   red: '#c0392b', purple: '#6c3fbf', thBg: '#f0f2f6', rowHover: '#f5f7fb',
 };
 
-const QUOTE_STATUSES: CrmQuoteStatus[] = ['Draft', 'Sent', 'Lost'];
+const QUOTE_STATUSES: CrmQuoteStatus[] = ['Draft', 'Sent', 'Pending', 'Follow up', 'Lost'];
 const DISCIPLINES: CrmRfqDiscipline[] = ['Steel', 'Concrete', 'Both'];
 const SOURCES = ['Email', 'Phone', 'Referral', 'Repeat Client', 'Website', 'Other'];
 const OWNERS = ['MK', 'SK', 'DC', 'JP'];
@@ -185,11 +185,13 @@ const DisciplineBadges: React.FC<{ discipline: CrmRfqDiscipline }> = ({ discipli
 
 const statusStyle = (s: CrmQuoteStatus): React.CSSProperties => {
   const map: Record<CrmQuoteStatus, { bg: string; color: string }> = {
-    Draft: { bg: '#f0f2f6', color: '#4a5568' },
-    Sent:  { bg: '#e3f0ff', color: '#1a5fa8' },
-    Lost:  { bg: '#fde8e8', color: '#a82828' },
+    Draft:      { bg: '#eef0f3', color: '#5a6578' },
+    Sent:       { bg: '#dbeafe', color: '#1d4ed8' },
+    Pending:    { bg: '#ffedd5', color: '#c2410c' },
+    'Follow up': { bg: '#fef9c3', color: '#a16207' },
+    Lost:       { bg: '#fee2e2', color: '#b91c1c' },
   };
-  const x = map[s];
+  const x = map[s] || map.Draft;
   return { background: x.bg, color: x.color };
 };
 
@@ -1069,12 +1071,12 @@ const CrmQuotesTab: React.FC<{
                 </td>
                 <td style={{ ...tdBase, fontFamily: FF, fontSize: 12, fontWeight: 600, color: '#0d9488', whiteSpace: 'nowrap' }}>{item.rfqNum}</td>
                 <td style={{ ...tdBase, fontFamily: FF, fontSize: 12, fontWeight: 600, color: C.text }}>{item.projectTitle || '—'}</td>
-                <td style={{ ...tdBase, fontFamily: FF, fontSize: 12, color: C.sub }}>{companyName(item.organizationId)}</td>
-                <td style={{ ...tdBase, fontFamily: FF, fontSize: 12, color: C.sub }}>{personName(item.personId)}</td>
+                <td style={{ ...tdBase, fontFamily: FF, fontSize: 12, fontWeight: 600, color: C.text }}>{companyName(item.organizationId)}</td>
+                <td style={{ ...tdBase, fontFamily: FF, fontSize: 12, fontWeight: 600, color: C.text }}>{personName(item.personId)}</td>
                 <td style={tdBase}>
                   <DisciplineBadges discipline={item.discipline} />
                 </td>
-                <td style={{ ...tdBase, fontFamily: FF, fontSize: 12, color: C.sub, whiteSpace: 'nowrap' }}>
+                <td style={{ ...tdBase, fontFamily: FF, fontSize: 12, fontWeight: 600, color: C.text, whiteSpace: 'nowrap' }}>
                   {item.quotedDate && (item.status === 'Sent' || item.status === 'Lost') ? fmtShortDate(item.quotedDate) : '—'}
                 </td>
                 <td style={{ ...tdBase, fontFamily: FF, fontSize: 12, fontWeight: 600, color: C.text }}>{item.projectValue ? fmtMoney(item.projectValue) : '—'}</td>

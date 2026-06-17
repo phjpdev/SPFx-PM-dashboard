@@ -84,7 +84,7 @@ export interface CrmRfq extends CrmEnquiryCore {
   stage: CrmRfqStage;
 }
 
-export type CrmQuoteStatus = 'Draft' | 'Sent' | 'Lost';
+export type CrmQuoteStatus = 'Draft' | 'Sent' | 'Lost' | 'Pending' | 'Follow up';
 
 export type CrmLostReason =
   | 'Price was too high'
