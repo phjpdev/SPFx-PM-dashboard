@@ -1,6 +1,6 @@
 import type { CrmQuote, CrmQuoteStatus, CrmRfq, CrmRfqDiscipline, CrmRfqStage } from './crmTypes';
 
-const QUOTE_STATUSES: CrmQuoteStatus[] = ['Draft', 'Sent', 'Lost'];
+const QUOTE_STATUSES: CrmQuoteStatus[] = ['Draft', 'Sent', 'Pending', 'Follow up', 'Lost'];
 
 const STAGES: CrmRfqStage[] = ['New Enquiry', 'Under Review', 'Ready to Quote', 'Won', 'Declined'];
 const DISCIPLINES: CrmRfqDiscipline[] = ['Steel', 'Concrete', 'Both'];
@@ -106,6 +106,7 @@ const asQuoteStatus = (v: unknown): CrmQuoteStatus => {
   const s = String(v || 'Draft');
   if (s === 'Accepted') return 'Draft';
   if (s === 'Declined') return 'Lost';
+  if (s === 'Follow Up' || s === 'Follow-up') return 'Follow up';
   return QUOTE_STATUSES.includes(s as CrmQuoteStatus) ? (s as CrmQuoteStatus) : 'Draft';
 };
 
