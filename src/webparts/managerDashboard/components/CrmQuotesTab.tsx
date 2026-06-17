@@ -12,6 +12,7 @@ import {
 import { normalizeCrmQuote } from './crmRfqNormalize';
 import { nextProjNum, quoteToCrmProject, quoteToIProject } from './crmProjectHelpers';
 import type { SharePointService } from '../../../shared/services/SharePointService';
+import type { IProject } from '../../../shared/models/IProject';
 import type { CrmAttachment, CrmPerson, CrmCompany, CrmProject, CrmQuote, CrmQuoteStatus, CrmLostReason, CrmRfqDiscipline } from './crmTypes';
 
 const FF = 'Montserrat,sans-serif';
@@ -201,8 +202,9 @@ const badge: React.CSSProperties = {
 };
 
 const actionBtn: React.CSSProperties = {
-  padding: '4px 10px', borderRadius: 3, fontFamily: FF, fontWeight: 700,
-  fontSize: 10.5, cursor: 'pointer', width: '100%', boxSizing: 'border-box', textAlign: 'center',
+  padding: '4px 8px', borderRadius: 3, fontFamily: FF, fontWeight: 700,
+  fontSize: 10, cursor: 'pointer', width: '100%', boxSizing: 'border-box', textAlign: 'center',
+  whiteSpace: 'nowrap', lineHeight: 1.2,
 };
 
 const DrawingReceivedField: React.FC<{
@@ -267,6 +269,105 @@ const LostReasonModal: React.FC<{
             style={{ padding: '8px 20px', borderRadius: 4, border: 'none', background: reason ? C.red : C.borderMd, color: '#fff', fontFamily: FF, fontWeight: 700, fontSize: 12, cursor: reason ? 'pointer' : 'default' }}
           >
             Mark Lost
+          </button>
+        </div>
+      </div>
+    </div>
+  );
+};
+
+const LinkProjectModal: React.FC<{
+  quote: CrmQuote;
+  spService: SharePointService;
+  onConfirm: (project: IProject) => void;
+  onClose: () => void;
+}> = ({ quote, spService, onConfirm, onClose }) => {
+  const [projects, setProjects] = React.useState<IProject[]>([]);
+  const [linkedProjNums, setLinkedProjNums] = React.useState<Set<string>>(new Set());
+  const [loading, setLoading] = React.useState(true);
+  const [search, setSearch] = React.useState('');
+  const [selected, setSelected] = React.useState('');
+
+  React.useEffect(() => {
+    let cancelled = false;
+    void (async () => {
+      try {
+        const [dash, crm] = await Promise.all([
+          spService.loadProjects(),
+          loadProjectsFromSharePoint(spService),
+        ]);
+        if (cancelled) return;
+        const linked = new Set(crm.map(p => p.projNum));
+        setLinkedProjNums(linked);
+        setProjects(dash.filter(p => !p.isEwo).sort((a, b) => a.projNum.localeCompare(b.projNum, undefined, { numeric: true })));
+      } finally {
+        if (!cancelled) setLoading(false);
+      }
+    })();
+    return () => { cancelled = true; };
+  }, [spService]);
+
+  const q = search.toLowerCase().trim();
+  const options = projects.filter(p => {
+    if (linkedProjNums.has(p.projNum)) return false;
+    if (!q) return true;
+    return (
+      p.projNum.toLowerCase().includes(q) ||
+      p.name.toLowerCase().includes(q) ||
+      (p.company || '').toLowerCase().includes(q) ||
+      (p.quoteNum || '').toLowerCase().includes(q)
+    );
+  });
+
+  const selectedProject = projects.find(p => p.projNum === selected);
+
+  return (
+    <div style={{ position: 'fixed', inset: 0, background: 'rgba(0,0,0,.45)', zIndex: 1001, display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
+      <div style={{ background: C.surface, borderRadius: 8, width: 480, maxHeight: '85vh', display: 'flex', flexDirection: 'column', boxShadow: '0 12px 40px rgba(0,0,0,.18)', border: `1px solid ${C.border}` }}>
+        <div style={{ padding: '14px 20px', borderBottom: `1px solid ${C.border}`, background: C.thBg }}>
+          <span style={{ fontFamily: FF, fontWeight: 700, fontSize: 14, color: C.text }}>Link to existing 3E project</span>
+        </div>
+        <div style={{ padding: '20px 22px', overflowY: 'auto' }}>
+          <p style={{ fontFamily: FF, fontSize: 12, color: C.sub, margin: '0 0 14px 0', lineHeight: 1.5 }}>
+            Link <strong style={{ color: C.purple }}>{quote.quoteNum || quote.rfqNum}</strong>
+            {quote.projectTitle ? ` — ${quote.projectTitle}` : ''} to an existing project number. No new 3E number will be created.
+          </p>
+          {loading ? (
+            <p style={{ fontFamily: FF, fontSize: 12, color: C.muted }}>Loading projects…</p>
+          ) : (
+            <>
+              <label style={ml}>Search project</label>
+              <input
+                value={search}
+                onChange={e => setSearch(e.target.value)}
+                placeholder="3E-500, name, company…"
+                style={{ ...mi, marginBottom: 12 }}
+              />
+              <label style={ml}>3E project number</label>
+              <select value={selected} onChange={e => setSelected(e.target.value)} style={mi}>
+                <option value="">— Select project —</option>
+                {options.map(p => (
+                  <option key={p.projNum} value={p.projNum}>
+                    {p.projNum} — {p.name}{p.company ? ` (${p.company})` : ''}{p.quoteNum ? ` · ${p.quoteNum}` : ''}
+                  </option>
+                ))}
+              </select>
+              {options.length === 0 && !loading && (
+                <p style={{ fontFamily: FF, fontSize: 11, color: C.muted, marginTop: 8 }}>
+                  No available projects — all may already be linked in CRM WIP.
+                </p>
+              )}
+            </>
+          )}
+        </div>
+        <div style={{ display: 'flex', gap: 10, justifyContent: 'flex-end', padding: '14px 22px', borderTop: `1px solid ${C.border}` }}>
+          <button onClick={onClose} style={{ padding: '8px 20px', borderRadius: 4, border: `1px solid ${C.borderMd}`, background: 'transparent', color: C.sub, fontFamily: FF, fontSize: 12, cursor: 'pointer' }}>Cancel</button>
+          <button
+            onClick={() => { if (selectedProject) onConfirm(selectedProject); }}
+            disabled={!selectedProject}
+            style={{ padding: '8px 20px', borderRadius: 4, border: 'none', background: selectedProject ? '#0d9488' : C.borderMd, color: '#fff', fontFamily: FF, fontWeight: 700, fontSize: 12, cursor: selectedProject ? 'pointer' : 'default' }}
+          >
+            Link project
           </button>
         </div>
       </div>
@@ -671,6 +772,7 @@ const CrmQuotesTab: React.FC<{
   const [archiveView, setArchiveView] = React.useState(false);
   const [modal, setModal] = React.useState<CrmQuote | null>(null);
   const [lostQuote, setLostQuote] = React.useState<CrmQuote | null>(null);
+  const [linkQuote, setLinkQuote] = React.useState<CrmQuote | null>(null);
   const [pendingDelId, setPendingDelId] = React.useState<string | null>(null);
   const [attTick, setAttTick] = React.useState(0);
   const delTimerRef = React.useRef<ReturnType<typeof setTimeout> | null>(null);
@@ -914,7 +1016,7 @@ const CrmQuotesTab: React.FC<{
   };
 
   const markWon = (item: CrmQuote): void => {
-    if (!confirm(`Mark ${item.rfqNum} as WON and create project ${item.projectTitle || ''}?`)) return;
+    if (!confirm(`Mark ${item.rfqNum} as WON and create a NEW project number for ${item.projectTitle || ''}?`)) return;
     void (async () => {
       try {
         const [crmProjects, dashProjects] = await Promise.all([
@@ -937,6 +1039,40 @@ const CrmQuotesTab: React.FC<{
         onQuoteWon?.(nextProjects, nextQuotes);
       } catch {
         alert('Could not create project. Please try again.');
+      }
+    })();
+  };
+
+  const linkToProject = (item: CrmQuote, project: IProject): void => {
+    void (async () => {
+      try {
+        const crmProjects = await loadProjectsFromSharePoint(spService);
+        if (crmProjects.some(p => p.projNum === project.projNum)) {
+          alert(`${project.projNum} is already linked in CRM.`);
+          return;
+        }
+        const wonDate = project.startDate && /^\d{4}-\d{2}-\d{2}/.test(project.startDate)
+          ? project.startDate.substring(0, 10)
+          : todayIso();
+        const crmProject: CrmProject = {
+          ...quoteToCrmProject(item, project.projNum, project.spId),
+          wonDate,
+        };
+        const nextProjects = [...crmProjects, crmProject];
+        const nextQuotes = quotesRef.current.filter(q => q.id !== item.id);
+        persistQuotes(nextQuotes);
+        try { localStorage.setItem(LS_PROJECTS, JSON.stringify(nextProjects)); } catch { /* ignore */ }
+        void upsertWipToSharePoint(spService, crmProject).catch(() => undefined);
+        if (project.spId && item.quoteNum && !project.quoteNum) {
+          try {
+            await spService.updateProject(project.spId, { ...project, quoteNum: item.quoteNum });
+          } catch { /* dashboard quote # optional */ }
+        }
+        setWonProjects(nextProjects);
+        setLinkQuote(null);
+        onQuoteWon?.(nextProjects, nextQuotes);
+      } catch {
+        alert('Could not link project. Please try again.');
       }
     })();
   };
@@ -1085,11 +1221,12 @@ const CrmQuotesTab: React.FC<{
                   <span style={{ ...badge, ...statusStyle(item.status) }}>{item.archived ? 'ARCHIVED' : item.status.toUpperCase()}</span>
                 </td>
                 <td style={{ ...tdBase, padding: '8px 10px 8px 6px' }}>
-                  <div style={{ display: 'flex', flexDirection: 'column', gap: 4, minWidth: 52 }}>
+                  <div style={{ display: 'flex', flexDirection: 'column', gap: 4, minWidth: 64 }}>
                     <button onClick={() => setModal({ ...item })} style={{ ...actionBtn, border: 'none', background: C.purple, color: '#fff' }}>Edit</button>
                     {!item.archived && item.status !== 'Lost' && (
                       <>
                         <button onClick={() => markWon(item)} style={{ ...actionBtn, border: 'none', background: C.green, color: '#fff' }}>WON</button>
+                        <button onClick={() => setLinkQuote(item)} style={{ ...actionBtn, border: 'none', background: '#0d9488', color: '#fff' }}>Link 3E</button>
                         <button onClick={() => setLostQuote(item)} style={{ ...actionBtn, border: `1px solid ${C.red}`, background: 'transparent', color: C.red }}>LOST</button>
                       </>
                     )}
@@ -1122,6 +1259,14 @@ const CrmQuotesTab: React.FC<{
           quote={lostQuote}
           onConfirm={reason => markLost(lostQuote, reason)}
           onClose={() => setLostQuote(null)}
+        />
+      )}
+      {linkQuote && (
+        <LinkProjectModal
+          quote={linkQuote}
+          spService={spService}
+          onConfirm={project => linkToProject(linkQuote, project)}
+          onClose={() => setLinkQuote(null)}
         />
       )}
       {budgetModal && (
