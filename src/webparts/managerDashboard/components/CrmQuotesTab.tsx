@@ -921,10 +921,20 @@ const CrmQuotesTab: React.FC<{
     const sent = yearQuotes.filter(q => q.status === 'Sent');
     const lost = yearQuotes.filter(q => q.status === 'Lost');
     const totalHours = yearQuotes.reduce((s, q) => s + (q.approximateHours || 0), 0);
-    const yearActual = wonForYear.reduce((s, p) => s + (p.projectValue || 0), 0);
-    const monthActual = wonForYear
-      .filter(p => new Date(p.wonDate + 'T00:00:00').getMonth() === month)
-      .reduce((s, p) => s + (p.projectValue || 0), 0);
+    const quoteValue = (q: { projectValue?: number }): number => q.projectValue || 0;
+    const quoteInMonth = (q: CrmQuote, mo: number): boolean => {
+      const ref = q.quotedDate || q.dateReceived;
+      if (!ref || !ref.startsWith(String(year))) return false;
+      const d = new Date(ref + 'T00:00:00');
+      return !isNaN(d.getTime()) && d.getMonth() === mo;
+    };
+    // All quote est values for the year (every status) + won/linked quotes no longer on the list
+    const yearActual = quotesForYear.reduce((s, q) => s + quoteValue(q), 0)
+      + wonForYear.reduce((s, p) => s + quoteValue(p), 0);
+    const monthActual = quotesForYear.filter(q => quoteInMonth(q, month)).reduce((s, q) => s + quoteValue(q), 0)
+      + wonForYear
+        .filter(p => new Date(p.wonDate + 'T00:00:00').getMonth() === month)
+        .reduce((s, p) => s + quoteValue(p), 0);
     const yearPct = budget.yearTarget > 0 ? Math.round((yearActual / budget.yearTarget) * 100) : null;
     const monthPct = monthBudgetTarget > 0 ? Math.round((monthActual / monthBudgetTarget) * 100) : null;
     const won = wonForYear.length;
@@ -942,7 +952,7 @@ const CrmQuotesTab: React.FC<{
       yearPct,
       monthPct,
     };
-  }, [yearQuotes, wonForYear, budget, month, monthBudgetTarget]);
+  }, [yearQuotes, quotesForYear, wonForYear, budget, month, monthBudgetTarget, year]);
 
   const q = search.toLowerCase();
   const listSource = archiveView ? archivedQuotes : yearQuotes;
