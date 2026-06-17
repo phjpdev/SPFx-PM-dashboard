@@ -1139,6 +1139,9 @@ export class SharePointService {
       relatedRfqId: d.relatedRfqId || '',
       lostReason: d.lostReason || '',
       status: d.status || 'Draft',
+      lostAt: d.lostAt || null,
+      archived: !!d.archived,
+      archivedAt: d.archivedAt || null,
       ...this.enquiryCoreBody(d),
     };
   }
@@ -1161,6 +1164,9 @@ export class SharePointService {
       relatedRfqId: i.relatedRfqId || '',
       lostReason: i.lostReason || '',
       status: (i.status || 'Draft') as CrmQuoteStatus,
+      lostAt: this.parseDate(i.lostAt),
+      archived: !!i.archived,
+      archivedAt: this.parseDate(i.archivedAt),
     }));
     return SharePointService.dedupeById(raw);
   }
@@ -1358,8 +1364,8 @@ export class SharePointService {
     await this.ensureCrmList(LIST_CRM_QUOTES, 'CRM Quotes');
     for (const n of ['quoteNum', 'rfqId', 'rfqNum', 'lostReason', 'status', 'relatedRfqId', ...coreText]) await ef(LIST_CRM_QUOTES, n, 2);
     for (const n of coreNote) await ef(LIST_CRM_QUOTES, n, 3);
-    for (const n of ['quotedDate', ...coreDate]) await ef(LIST_CRM_QUOTES, n, 4);
-    for (const n of ['createQuoteXero', ...coreBool]) await ef(LIST_CRM_QUOTES, n, 8);
+    for (const n of ['quotedDate', 'lostAt', 'archivedAt', ...coreDate]) await ef(LIST_CRM_QUOTES, n, 4);
+    for (const n of ['createQuoteXero', 'archived', ...coreBool]) await ef(LIST_CRM_QUOTES, n, 8);
     for (const n of coreNum) await ef(LIST_CRM_QUOTES, n, 9);
 
     await this.ensureCrmList(LIST_CRM_WIP, 'CRM Work In Progress');

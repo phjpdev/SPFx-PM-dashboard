@@ -1,5 +1,5 @@
 import * as React from 'react';
-import { getQuoteAttachments, setQuoteAttachments } from './crmAttachmentStore';
+import { getQuoteAttachments, getAllQuoteAttachmentIds, setQuoteAttachments } from './crmAttachmentStore';
 import { DocumentUploadSection } from './crmDocumentUpload';
 import {
   loadProjectsFromSharePoint, loadQuoteBudget, loadQuotesFromSharePoint, loadQuotesRemote,
@@ -88,7 +88,7 @@ const exportQuotesCsv = (
   companyName: (id: string) => string,
   personName: (id: string) => string,
 ): void => {
-  const headers = ['Quote #', 'RFQ #', 'Project', 'Company', 'Contact', 'Type', 'Date Sent', 'Est Value', 'Hours Est', 'Status', 'Owner', 'Lost Reason'];
+  const headers = ['Quote #', 'RFQ #', 'Project', 'Company', 'Contact', 'Type', 'Date Sent', 'Est Value', 'Hours Est', 'Status', 'Lost Reason'];
   const lines = [
     headers.join(','),
     ...rows.map(item => [
@@ -102,7 +102,6 @@ const exportQuotesCsv = (
       csvCell(item.projectValue || ''),
       csvCell(item.approximateHours || ''),
       csvCell(item.status),
-      csvCell(item.assignedTo),
       csvCell(item.lostReason || ''),
     ].join(',')),
   ];
@@ -123,6 +122,45 @@ const loadQuotesLocal = (): CrmQuote[] => {
 
 const normalizeQuote = (q: CrmQuote): CrmQuote =>
   normalizeCrmQuote(q as CrmQuote & Record<string, unknown>);
+
+const LOST_ARCHIVE_MS = 28 * 24 * 60 * 60 * 1000;
+
+const todayIso = (): string => {
+  const t = new Date();
+  return `${t.getFullYear()}-${String(t.getMonth() + 1).padStart(2, '0')}-${String(t.getDate()).padStart(2, '0')}`;
+};
+
+const shouldAutoArchive = (q: CrmQuote): boolean => {
+  if (q.archived || q.status !== 'Lost' || !q.lostAt) return false;
+  const lostMs = new Date(q.lostAt + 'T00:00:00').getTime();
+  return Date.now() - lostMs >= LOST_ARCHIVE_MS;
+};
+
+/** lostAt was inferred from sent/received date — not when the quote was marked lost */
+const isLegacyLostAt = (q: CrmQuote): boolean =>
+  !!q.lostAt && (q.lostAt === q.quotedDate || q.lostAt === q.dateReceived);
+
+const processQuotes = (raw: CrmQuote[]): CrmQuote[] =>
+  raw.map(normalizeQuote).map(q => {
+    let next = q;
+    if (q.status === 'Lost') {
+      if (!q.lostAt || isLegacyLostAt(q)) {
+        next = { ...q, lostAt: todayIso(), archived: false, archivedAt: undefined };
+      } else if (q.archived && !shouldAutoArchive(q)) {
+        next = { ...q, archived: false, archivedAt: undefined };
+      }
+    }
+    if (shouldAutoArchive(next)) {
+      next = { ...next, archived: true, archivedAt: todayIso() };
+    }
+    return next;
+  });
+
+const tdBase: React.CSSProperties = {
+  padding: '10px',
+  borderBottom: `1px solid ${C.border}`,
+  verticalAlign: 'middle',
+};
 
 const disciplineBadgeStyle = (d: 'Steel' | 'Concrete'): React.CSSProperties => ({
   display: 'inline-block', padding: '1px 6px', borderRadius: 3, fontSize: 9, fontWeight: 700,
@@ -628,33 +666,68 @@ const CrmQuotesTab: React.FC<{
   const [ready, setReady] = React.useState(false);
   const [search, setSearch] = React.useState('');
   const [statusFilter, setStatusFilter] = React.useState('all');
+  const [archiveView, setArchiveView] = React.useState(false);
   const [modal, setModal] = React.useState<CrmQuote | null>(null);
   const [lostQuote, setLostQuote] = React.useState<CrmQuote | null>(null);
   const [pendingDelId, setPendingDelId] = React.useState<string | null>(null);
+  const [attTick, setAttTick] = React.useState(0);
   const delTimerRef = React.useRef<ReturnType<typeof setTimeout> | null>(null);
   const quotesRef = React.useRef(quotes);
   quotesRef.current = quotes;
+
+  const syncQuoteChanges = React.useCallback((before: CrmQuote[], after: CrmQuote[]): void => {
+    const beforeMap = new Map(before.map(q => [q.id, q]));
+    for (const q of after) {
+      const p = beforeMap.get(q.id);
+      if (!p || JSON.stringify(p) !== JSON.stringify(q)) {
+        void upsertQuoteToSharePoint(spService, q).then(withSpId => {
+          if (withSpId.spId !== q.spId) {
+            setQuotes(cur => {
+              const updated = cur.map(x => x.id === withSpId.id ? { ...x, spId: withSpId.spId } : x);
+              quotesRef.current = updated;
+              try { localStorage.setItem(LS_QUOTES, JSON.stringify(updated)); } catch { /* ignore */ }
+              return updated;
+            });
+          }
+        }).catch(() => undefined);
+      }
+    }
+  }, [spService]);
+
+  const applyProcessedQuotes = React.useCallback((raw: CrmQuote[]): void => {
+    const before = quotesRef.current;
+    const processed = processQuotes(raw);
+    quotesRef.current = processed;
+    setQuotes(processed);
+    try { localStorage.setItem(LS_QUOTES, JSON.stringify(processed)); } catch { /* ignore */ }
+    if (JSON.stringify(before) !== JSON.stringify(processed)) {
+      syncQuoteChanges(before.length ? before : raw.map(normalizeQuote), processed);
+    }
+  }, [syncQuoteChanges]);
+
   const reload = React.useCallback(async (): Promise<void> => {
     try {
       const remote = await loadQuotesRemote(spService);
       if (remote !== null) {
-        const next = remote.map(normalizeQuote);
-        if (JSON.stringify(next) !== JSON.stringify(quotesRef.current)) {
-          quotesRef.current = next;
-          setQuotes(next);
-          try { localStorage.setItem(LS_QUOTES, JSON.stringify(next)); } catch { /* ignore */ }
+        const processed = processQuotes(remote);
+        if (JSON.stringify(processed) !== JSON.stringify(quotesRef.current)) {
+          const before = quotesRef.current;
+          quotesRef.current = processed;
+          setQuotes(processed);
+          try { localStorage.setItem(LS_QUOTES, JSON.stringify(processed)); } catch { /* ignore */ }
+          syncQuoteChanges(before, processed);
         }
       }
       const projs = await loadProjectsFromSharePoint(spService);
       setWonProjects(projs);
     } catch {
-      setQuotes(loadQuotesLocal().map(normalizeQuote));
+      setQuotes(processQuotes(loadQuotesLocal()));
     }
-  }, [spService]);
+  }, [spService, syncQuoteChanges]);
 
   React.useEffect(() => {
     if (seedQuotes?.length) {
-      setQuotes(seedQuotes.map(normalizeQuote));
+      applyProcessedQuotes(seedQuotes);
       setReady(true);
       onSeedApplied?.();
       void Promise.all([
@@ -675,18 +748,18 @@ const CrmQuotesTab: React.FC<{
           loadQuoteBudget(spService),
         ]);
         if (!cancelled) {
-          setQuotes(data.map(normalizeQuote));
+          applyProcessedQuotes(data);
           setWonProjects(projs);
           setBudgetStore(b);
         }
       } catch {
-        if (!cancelled) setQuotes(loadQuotesLocal().map(normalizeQuote));
+        if (!cancelled) applyProcessedQuotes(loadQuotesLocal());
       } finally {
         if (!cancelled) setReady(true);
       }
     })();
     return () => { cancelled = true; };
-  }, [spService, seedQuotes]); // eslint-disable-line react-hooks/exhaustive-deps
+  }, [spService, seedQuotes, applyProcessedQuotes]); // eslint-disable-line react-hooks/exhaustive-deps
 
   React.useEffect(() => {
     if (!ready) return;
@@ -698,6 +771,11 @@ const CrmQuotesTab: React.FC<{
       window.removeEventListener('focus', onFocus);
     };
   }, [ready, reload]);
+
+  const quotesWithAttachments = React.useMemo(
+    () => getAllQuoteAttachmentIds(),
+    [attTick, quotes],
+  );
 
   const companyName = (id: string): string => companies.find(c => c.id === id)?.name || '—';
   const personName = (id: string): string => persons.find(p => p.id === id)?.name || '—';
@@ -729,7 +807,9 @@ const CrmQuotesTab: React.FC<{
   const calendarYear = new Date().getFullYear();
   const month = year === calendarYear ? new Date().getMonth() : 0;
   const budget = getQuoteBudgetForYear(budgetStore, year);
-  const yearQuotes = quotes.filter(q => quoteListYear(q) === String(year));
+  const quotesForYear = quotes.filter(q => quoteListYear(q) === String(year));
+  const yearQuotes = quotesForYear.filter(q => !q.archived);
+  const archivedQuotes = quotesForYear.filter(q => q.archived && q.status === 'Lost');
   const wonForYear = wonProjects.filter(p => p.wonDate.startsWith(String(year)));
   const monthBudgetTarget = getMonthBudgetTarget(budget, month);
 
@@ -761,8 +841,9 @@ const CrmQuotesTab: React.FC<{
   }, [yearQuotes, wonForYear, budget, month, monthBudgetTarget]);
 
   const q = search.toLowerCase();
-  const filtered = yearQuotes.filter(item => {
-    if (statusFilter !== 'all' && item.status !== statusFilter) return false;
+  const listSource = archiveView ? archivedQuotes : yearQuotes;
+  const filtered = listSource.filter(item => {
+    if (!archiveView && statusFilter !== 'all' && item.status !== statusFilter) return false;
     if (!q) return true;
     return (
       item.quoteNum.toLowerCase().includes(q) ||
@@ -773,15 +854,16 @@ const CrmQuotesTab: React.FC<{
   });
 
   const persistQuotes = (next: CrmQuote[]): void => {
+    const processed = processQuotes(next);
     const prev = quotesRef.current;
-    quotesRef.current = next;
-    setQuotes(next);
-    try { localStorage.setItem(LS_QUOTES, JSON.stringify(next)); } catch { /* ignore */ }
+    quotesRef.current = processed;
+    setQuotes(processed);
+    try { localStorage.setItem(LS_QUOTES, JSON.stringify(processed)); } catch { /* ignore */ }
 
     const prevMap = new Map(prev.map(q => [q.id, q]));
-    const nextMap = new Map(next.map(q => [q.id, q]));
+    const nextMap = new Map(processed.map(q => [q.id, q]));
 
-    for (const q of next) {
+    for (const q of processed) {
       const p = prevMap.get(q.id);
       if (!p || JSON.stringify(p) !== JSON.stringify(q)) {
         void upsertQuoteToSharePoint(spService, q).then(withSpId => {
@@ -803,14 +885,28 @@ const CrmQuotesTab: React.FC<{
   };
 
   const saveQuote = (item: CrmQuote): void => {
-    const saved = normalizeQuote(item);
+    let saved = normalizeQuote(item);
+    const prev = quotesRef.current.find(x => x.id === saved.id);
+    if (saved.status === 'Lost') {
+      if (prev?.status !== 'Lost' || !saved.lostAt || isLegacyLostAt(saved)) {
+        saved = { ...saved, lostAt: todayIso(), archived: false, archivedAt: undefined };
+      }
+    }
     persistQuotes(quotesRef.current.map(x => x.id === saved.id ? saved : x));
+    setAttTick(t => t + 1);
     setModal(null);
   };
 
   const markLost = (item: CrmQuote, reason: CrmLostReason): void => {
     persistQuotes(quotesRef.current.map(x => x.id === item.id
-      ? { ...x, status: 'Lost' as CrmQuoteStatus, lostReason: reason }
+      ? {
+        ...x,
+        status: 'Lost' as CrmQuoteStatus,
+        lostReason: reason,
+        lostAt: todayIso(),
+        archived: false,
+        archivedAt: undefined,
+      }
       : x));
     setLostQuote(null);
   };
@@ -906,15 +1002,28 @@ const CrmQuotesTab: React.FC<{
         />
         <select
           value={statusFilter}
-          onChange={e => setStatusFilter(e.target.value)}
+          onChange={e => { setStatusFilter(e.target.value); setArchiveView(false); }}
           style={{ padding: '7px 10px', borderRadius: 4, border: `1px solid ${C.borderMd}`, background: C.surface, fontFamily: FF, fontSize: 12, color: C.text, width: 150, flexShrink: 0, boxSizing: 'border-box' }}
+          disabled={archiveView}
         >
           <option value="all">All statuses</option>
           {QUOTE_STATUSES.map(s => <option key={s} value={s}>{s}</option>)}
         </select>
         <div style={{ flex: 1 }} />
         <button
-          onClick={() => exportQuotesCsv(yearQuotes, year, companyName, personName)}
+          onClick={() => setArchiveView(v => !v)}
+          style={{
+            padding: '7px 16px', borderRadius: 4, fontFamily: FF, fontWeight: 700, fontSize: 12,
+            cursor: 'pointer', flexShrink: 0, whiteSpace: 'nowrap',
+            border: archiveView ? `2px solid ${C.sub}` : `1px solid ${C.borderMd}`,
+            background: archiveView ? C.thBg : C.surface,
+            color: archiveView ? C.text : C.sub,
+          }}
+        >
+          Archive{archivedQuotes.length > 0 ? ` (${archivedQuotes.length})` : ''}
+        </button>
+        <button
+          onClick={() => exportQuotesCsv(archiveView ? archivedQuotes : yearQuotes, year, companyName, personName)}
           style={{ padding: '7px 16px', borderRadius: 4, border: `1px solid ${C.borderMd}`, background: C.surface, fontFamily: FF, fontWeight: 700, fontSize: 12, color: C.text, cursor: 'pointer', flexShrink: 0, whiteSpace: 'nowrap' }}
         >
           Export All
@@ -925,7 +1034,7 @@ const CrmQuotesTab: React.FC<{
         <table style={{ width: '100%', borderCollapse: 'collapse', minWidth: 960 }}>
           <thead>
             <tr>
-              {['Quote #', 'RFQ #', 'Project', 'Company', 'Contact', 'Type', 'Quoted', 'Est Value', 'Hours Est', 'Status', 'Owner', 'Actions'].map((h, i) => (
+              {['Quote #', 'RFQ #', 'Project', 'Company', 'Contact', 'Type', 'Quoted', 'Est Value', 'Hours Est', 'Status', 'Actions'].map((h, i) => (
                 <th key={h} style={{ padding: '9px 10px', textAlign: 'left', fontFamily: FF, fontWeight: 700, fontSize: 10, letterSpacing: '.06em', textTransform: 'uppercase', color: C.sub, background: C.thBg, borderBottom: `2px solid ${C.borderMd}`, whiteSpace: 'nowrap', ...(i < 2 ? { minWidth: 72 } : {}) }}>
                   {h}
                 </th>
@@ -935,39 +1044,48 @@ const CrmQuotesTab: React.FC<{
           <tbody>
             {filtered.length === 0 ? (
               <tr>
-                <td colSpan={12} style={{ padding: 48, textAlign: 'center', fontFamily: FF, fontSize: 13, color: C.muted }}>
+                <td colSpan={11} style={{ padding: 48, textAlign: 'center', fontFamily: FF, fontSize: 13, color: C.muted }}>
                   {quotes.length === 0
                     ? 'No quotes yet — move an RFQ at Ready to Quote stage using the Quote button.'
-                    : 'No results match your search.'}
+                    : archiveView
+                      ? 'No archived quotes yet — lost quotes are archived automatically after 4 weeks.'
+                      : 'No results match your search.'}
                 </td>
               </tr>
             ) : filtered.map(item => (
               <tr
                 key={item.id}
+                style={{ verticalAlign: 'middle' }}
                 onMouseEnter={e => { (e.currentTarget as HTMLTableRowElement).style.background = C.rowHover; }}
                 onMouseLeave={e => { (e.currentTarget as HTMLTableRowElement).style.background = 'transparent'; }}
               >
-                <td style={{ padding: '10px', fontFamily: FF, fontSize: 12, fontWeight: 700, color: C.purple, borderBottom: `1px solid ${C.border}`, whiteSpace: 'nowrap' }}>{item.quoteNum || '—'}</td>
-                <td style={{ padding: '10px', fontFamily: FF, fontSize: 12, fontWeight: 600, color: '#0d9488', borderBottom: `1px solid ${C.border}`, whiteSpace: 'nowrap' }}>{item.rfqNum}</td>
-                <td style={{ padding: '10px', fontFamily: FF, fontSize: 12, fontWeight: 600, color: C.text, borderBottom: `1px solid ${C.border}` }}>{item.projectTitle || '—'}</td>
-                <td style={{ padding: '10px', fontFamily: FF, fontSize: 12, color: C.sub, borderBottom: `1px solid ${C.border}` }}>{companyName(item.organizationId)}</td>
-                <td style={{ padding: '10px', fontFamily: FF, fontSize: 12, color: C.sub, borderBottom: `1px solid ${C.border}` }}>{personName(item.personId)}</td>
-                <td style={{ padding: '10px', borderBottom: `1px solid ${C.border}` }}>
+                <td style={{ ...tdBase, fontFamily: FF, fontSize: 12, fontWeight: 700, color: C.purple, whiteSpace: 'nowrap' }}>
+                  <span style={{ display: 'inline-flex', alignItems: 'center', gap: 5 }}>
+                    <span>{item.quoteNum || '—'}</span>
+                    {quotesWithAttachments.has(item.id) && (
+                      <span title="Has attachments" style={{ fontSize: 12, lineHeight: 1, color: C.sub }} aria-label="Has attachments">📎</span>
+                    )}
+                  </span>
+                </td>
+                <td style={{ ...tdBase, fontFamily: FF, fontSize: 12, fontWeight: 600, color: '#0d9488', whiteSpace: 'nowrap' }}>{item.rfqNum}</td>
+                <td style={{ ...tdBase, fontFamily: FF, fontSize: 12, fontWeight: 600, color: C.text }}>{item.projectTitle || '—'}</td>
+                <td style={{ ...tdBase, fontFamily: FF, fontSize: 12, color: C.sub }}>{companyName(item.organizationId)}</td>
+                <td style={{ ...tdBase, fontFamily: FF, fontSize: 12, color: C.sub }}>{personName(item.personId)}</td>
+                <td style={tdBase}>
                   <DisciplineBadges discipline={item.discipline} />
                 </td>
-                <td style={{ padding: '10px', fontFamily: FF, fontSize: 12, color: C.sub, borderBottom: `1px solid ${C.border}`, whiteSpace: 'nowrap' }}>
+                <td style={{ ...tdBase, fontFamily: FF, fontSize: 12, color: C.sub, whiteSpace: 'nowrap' }}>
                   {item.quotedDate && (item.status === 'Sent' || item.status === 'Lost') ? fmtShortDate(item.quotedDate) : '—'}
                 </td>
-                <td style={{ padding: '10px', fontFamily: FF, fontSize: 12, fontWeight: 600, color: C.text, borderBottom: `1px solid ${C.border}` }}>{item.projectValue ? fmtMoney(item.projectValue) : '—'}</td>
-                <td style={{ padding: '10px', fontFamily: FF, fontSize: 12, fontWeight: 600, color: C.sub, borderBottom: `1px solid ${C.border}` }}>{item.approximateHours ? String(item.approximateHours) : '—'}</td>
-                <td style={{ padding: '10px', borderBottom: `1px solid ${C.border}` }}>
-                  <span style={{ ...badge, ...statusStyle(item.status) }}>{item.status.toUpperCase()}</span>
+                <td style={{ ...tdBase, fontFamily: FF, fontSize: 12, fontWeight: 600, color: C.text }}>{item.projectValue ? fmtMoney(item.projectValue) : '—'}</td>
+                <td style={{ ...tdBase, fontFamily: FF, fontSize: 12, fontWeight: 600, color: C.sub }}>{item.approximateHours ? String(item.approximateHours) : '—'}</td>
+                <td style={tdBase}>
+                  <span style={{ ...badge, ...statusStyle(item.status) }}>{item.archived ? 'ARCHIVED' : item.status.toUpperCase()}</span>
                 </td>
-                <td style={{ padding: '10px', fontFamily: FF, fontSize: 12, fontWeight: 700, color: C.sub, borderBottom: `1px solid ${C.border}` }}>{item.assignedTo || '—'}</td>
-                <td style={{ padding: '8px 10px 8px 6px', borderBottom: `1px solid ${C.border}`, verticalAlign: 'middle' }}>
+                <td style={{ ...tdBase, padding: '8px 10px 8px 6px' }}>
                   <div style={{ display: 'flex', flexDirection: 'column', gap: 4, minWidth: 52 }}>
                     <button onClick={() => setModal({ ...item })} style={{ ...actionBtn, border: 'none', background: C.purple, color: '#fff' }}>Edit</button>
-                    {item.status !== 'Lost' && (
+                    {!item.archived && item.status !== 'Lost' && (
                       <>
                         <button onClick={() => markWon(item)} style={{ ...actionBtn, border: 'none', background: C.green, color: '#fff' }}>WON</button>
                         <button onClick={() => setLostQuote(item)} style={{ ...actionBtn, border: `1px solid ${C.red}`, background: 'transparent', color: C.red }}>LOST</button>
@@ -984,7 +1102,7 @@ const CrmQuotesTab: React.FC<{
           </tbody>
         </table>
         <div style={{ padding: '8px 14px', borderTop: `1px solid ${C.border}`, fontFamily: FF, fontSize: 11, color: C.muted, background: C.thBg }}>
-          {filtered.length} of {yearQuotes.length} quote{yearQuotes.length !== 1 ? 's' : ''} ({year})
+          {filtered.length} of {listSource.length} quote{listSource.length !== 1 ? 's' : ''} ({year}{archiveView ? ', archived — lost 4+ weeks' : ''})
         </div>
       </div>
 

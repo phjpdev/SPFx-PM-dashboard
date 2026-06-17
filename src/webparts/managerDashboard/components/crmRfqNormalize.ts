@@ -145,6 +145,9 @@ export function normalizeCrmQuote(raw: Partial<CrmQuote> & Record<string, unknow
     relatedRfqId: String(raw.relatedRfqId || ''),
     lostReason: String(raw.lostReason || ''),
     status: asQuoteStatus(raw.status),
+    lostAt: normalizeCrmDate(String(raw.lostAt || ''), year) || undefined,
+    archived: !!raw.archived,
+    archivedAt: normalizeCrmDate(String(raw.archivedAt || ''), year) || undefined,
   };
 }
 

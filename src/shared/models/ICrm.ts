@@ -107,6 +107,11 @@ export interface CrmQuote extends CrmEnquiryCore {
   relatedRfqId: string;
   lostReason: string;
   status: CrmQuoteStatus;
+  /** ISO date when quote was marked lost */
+  lostAt?: string;
+  archived?: boolean;
+  /** ISO date when quote was archived */
+  archivedAt?: string;
 }
 
 /** Won quote promoted to an active 3EDGE project. */

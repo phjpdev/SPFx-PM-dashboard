@@ -41,6 +41,14 @@ export const setRfqAttachments = (rfqId: string, attachments: CrmAttachment[]): 
 export const getQuoteAttachments = (quoteId: string): CrmAttachment[] =>
   loadMap(LS_QUOTE_ATT)[quoteId] ?? [];
 
+export const quoteHasAttachments = (quoteId: string): boolean =>
+  getQuoteAttachments(quoteId).length > 0;
+
+export const getAllQuoteAttachmentIds = (): Set<string> => {
+  const map = loadMap(LS_QUOTE_ATT);
+  return new Set(Object.keys(map).filter(id => (map[id]?.length ?? 0) > 0));
+};
+
 export const setQuoteAttachments = (quoteId: string, attachments: CrmAttachment[]): void => {
   const map = loadMap(LS_QUOTE_ATT);
   if (attachments.length) map[quoteId] = attachments;
