@@ -42,6 +42,10 @@ export class SharePointService {
   private _webRelUrl: string = '';
   /** After 403/400 on library writes, use 3Edge_Settings only (no repeated failed file API calls). */
   private _siteDataFilesUnavailable = false;
+  /** Cached field names per list — avoids hundreds of redundant POST /fields calls. */
+  private _listFieldNames = new Map<string, Set<string>>();
+  /** One in-flight/completed provisioning run per service instance. */
+  private _ensureAllCrmListsTask: Promise<void> | null = null;
 
   // spHttpClient param kept for API compat but all requests use plain fetch
   constructor(siteUrl: string, _spHttpClient?: SPHttpClient) {
@@ -724,14 +728,44 @@ export class SharePointService {
     }
   }
 
+  private async loadListFieldNames(listTitle: string): Promise<Set<string>> {
+    const cached = this._listFieldNames.get(listTitle);
+    if (cached) return cached;
+    const t = SharePointService.oDataStr(listTitle);
+    try {
+      const d = await this.spGet(
+        `/_api/web/lists/getbytitle('${t}')/fields?$select=Title,StaticName,InternalName&$top=500`,
+      );
+      const names = new Set<string>();
+      for (const f of (d.value || []) as Array<{ Title?: string; StaticName?: string; InternalName?: string }>) {
+        if (f.Title) names.add(String(f.Title).toLowerCase());
+        if (f.StaticName) names.add(String(f.StaticName).toLowerCase());
+        if (f.InternalName) names.add(String(f.InternalName).toLowerCase());
+      }
+      this._listFieldNames.set(listTitle, names);
+      return names;
+    } catch {
+      const empty = new Set<string>();
+      this._listFieldNames.set(listTitle, empty);
+      return empty;
+    }
+  }
+
   private async ensureCrmListField(listTitle: string, fieldTitle: string, kind: number): Promise<void> {
+    const names = await this.loadListFieldNames(listTitle);
+    const key = fieldTitle.toLowerCase();
+    if (names.has(key)) return;
     const t = SharePointService.oDataStr(listTitle);
     try {
       await this.spPost(`/_api/web/lists/getbytitle('${t}')/fields`, {
         FieldTypeKind: kind,
         Title: fieldTitle,
       });
-    } catch { /* column may already exist */ }
+      names.add(key);
+    } catch {
+      // Column likely already exists — mark as present so we do not retry endlessly.
+      names.add(key);
+    }
   }
 
   /** Create CRM list + crmId / recordNum / payloadJson columns if missing. */
@@ -1335,7 +1369,14 @@ export class SharePointService {
   // ── CRM list provisioning ──────────────────────────────────────────────────
 
   /** Create all 5 CRM lists with proper columns if they do not already exist. */
-  public async ensureAllCrmLists(): Promise<void> {
+  public ensureAllCrmLists(): Promise<void> {
+    if (!this._ensureAllCrmListsTask) {
+      this._ensureAllCrmListsTask = this.ensureAllCrmListsInner();
+    }
+    return this._ensureAllCrmListsTask;
+  }
+
+  private async ensureAllCrmListsInner(): Promise<void> {
     const ef = (list: string, name: string, kind: number): Promise<void> =>
       this.ensureCrmListField(list, name, kind);
 

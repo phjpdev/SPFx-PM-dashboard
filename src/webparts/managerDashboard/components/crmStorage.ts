@@ -261,6 +261,26 @@ export async function saveRfqsToSharePoint(sp: SharePointService, rfqs: CrmRfq[]
 
 // ── Quotes ─────────────────────────────────────────────────────────────────
 
+export function loadQuotesLocal(): CrmQuote[] {
+  return loadLS<CrmQuote[]>(LS_QUOTES, []).map(
+    q => normalizeCrmQuote(q as CrmQuote & Record<string, unknown>),
+  );
+}
+
+/** Keep local-only quotes until SharePoint has caught up (match by id, quote #, or RFQ id). */
+export function mergeQuotesWithLocal(local: CrmQuote[], remote: CrmQuote[]): CrmQuote[] {
+  const remoteIds = new Set(remote.map(q => q.id));
+  const remoteNums = new Set(remote.map(q => q.quoteNum).filter(Boolean));
+  const remoteRfqIds = new Set(remote.map(q => q.rfqId).filter(Boolean));
+  const pending = local.filter(q => {
+    if (remoteIds.has(q.id)) return false;
+    if (q.quoteNum && remoteNums.has(q.quoteNum)) return false;
+    if (q.rfqId && remoteRfqIds.has(q.rfqId)) return false;
+    return true;
+  });
+  return pending.length ? [...remote, ...pending] : remote;
+}
+
 export async function loadQuotesRemote(sp: SharePointService): Promise<CrmQuote[] | null> {
   try {
     const rows = await sp.loadCrmQuotes();
@@ -270,15 +290,15 @@ export async function loadQuotesRemote(sp: SharePointService): Promise<CrmQuote[
 
 export async function loadQuotesFromSharePoint(sp: SharePointService): Promise<CrmQuote[]> {
   try {
-    const quotes = (await sp.loadCrmQuotes()).map(
+    const remote = (await sp.loadCrmQuotes()).map(
       q => normalizeCrmQuote(q as CrmQuote & Record<string, unknown>),
     );
-    try { localStorage.setItem(LS_QUOTES, JSON.stringify(quotes)); } catch { /* ignore */ }
-    return quotes;
+    // Read local cache after the network round-trip so concurrent saves are not lost.
+    const merged = mergeQuotesWithLocal(loadQuotesLocal(), remote);
+    try { localStorage.setItem(LS_QUOTES, JSON.stringify(merged)); } catch { /* ignore */ }
+    return merged;
   } catch {
-    return loadLS<CrmQuote[]>(LS_QUOTES, []).map(
-      q => normalizeCrmQuote(q as CrmQuote & Record<string, unknown>),
-    );
+    return loadQuotesLocal();
   }
 }
 
@@ -379,7 +399,9 @@ export async function upsertQuoteToSharePoint(sp: SharePointService, quote: CrmQ
     if (quote.spId) { await sp.updateCrmQuote(quote.spId, quote); return quote; }
     const spId = await sp.addCrmQuote(quote);
     return { ...quote, spId };
-  } catch { return quote; }
+  } catch {
+    return quote;
+  }
 }
 
 export async function deleteQuoteFromSharePoint(sp: SharePointService, quote: Pick<CrmQuote, 'id' | 'spId'>): Promise<void> {

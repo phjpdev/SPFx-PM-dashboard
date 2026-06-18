@@ -2,6 +2,8 @@ import * as React from 'react';
 import {
   loadProjectsFromSharePoint,
   loadQuotesFromSharePoint,
+  loadQuotesLocal,
+  loadQuotesRemote,
   loadRfqsFromSharePoint,
   loadRfqsRemote,
   upsertRfqToSharePoint,
@@ -13,7 +15,7 @@ import { DocumentUploadSection } from './crmDocumentUpload';
 import { nextRfqNum } from './crmProjectHelpers';
 import type { CrmAttachment } from './crmTypes';
 import type { SharePointService } from '../../../shared/services/SharePointService';
-import { normalizeCrmRfq } from './crmRfqNormalize';
+import { normalizeCrmRfq, normalizeQuoteNum } from './crmRfqNormalize';
 import type { CrmPerson, CrmCompany, CrmQuote, CrmRfq, CrmRfqDiscipline, CrmRfqStage } from './crmTypes';
 
 const FF = 'Montserrat,sans-serif';
@@ -596,11 +598,12 @@ const CrmRfqTab: React.FC<{
 
   const confirmMoveToQuote = (rfq: CrmRfq, xeroQuoteNum: string): void => {
     void (async () => {
-      const existingQuotes = (await loadQuotesFromSharePoint(spService)).map(q => ({
+      const remote = await loadQuotesRemote(spService);
+      const existingQuotes = (remote ?? loadQuotesLocal()).map(q => ({
         ...q,
         approximateHours: typeof q.approximateHours === 'number' ? q.approximateHours : 0,
       }));
-      const quote = rfqToQuote(rfq, xeroQuoteNum);
+      const quote = rfqToQuote(rfq, normalizeQuoteNum(xeroQuoteNum));
       copyRfqAttachmentsToQuote(rfq.id, quote.id);
       const nextQuotes = [...existingQuotes, quote];
       const nextRfqs = rfqsRef.current.filter(x => x.id !== rfq.id);
@@ -611,17 +614,19 @@ const CrmRfqTab: React.FC<{
       } catch { /* ignore */ }
 
       setRfqs(nextRfqs);
-      setQuotes(nextQuotes);
-      rfqsRef.current = nextRfqs;
       quotesRef.current = nextQuotes;
+      rfqsRef.current = nextRfqs;
       setMoveQuoteRfq(null);
 
-      onMovedToQuote?.(nextQuotes);
+      const savedQuote = await upsertQuoteToSharePoint(spService, quote);
+      const seededQuotes = nextQuotes.map(q => q.id === savedQuote.id ? savedQuote : q);
+      setQuotes(seededQuotes);
+      quotesRef.current = seededQuotes;
+      try { localStorage.setItem('3edge-crm-quotes', JSON.stringify(seededQuotes)); } catch { /* ignore */ }
 
-      await Promise.all([
-        upsertQuoteToSharePoint(spService, quote),
-        deleteRfqFromSharePoint(spService, rfq),
-      ]);
+      onMovedToQuote?.(seededQuotes);
+
+      await deleteRfqFromSharePoint(spService, rfq);
     })();
   };
 
