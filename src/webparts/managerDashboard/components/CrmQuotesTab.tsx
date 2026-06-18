@@ -3,6 +3,7 @@ import { getQuoteAttachments, getAllQuoteAttachmentIds, setQuoteAttachments } fr
 import { DocumentUploadSection } from './crmDocumentUpload';
 import {
   loadProjectsFromSharePoint, loadQuoteBudget, loadQuotesFromSharePoint, loadQuotesRemote,
+  loadQuotesLocal, mergeQuotesWithLocal,
   saveQuoteBudget,
   upsertQuoteToSharePoint, deleteQuoteFromSharePoint, upsertWipToSharePoint,
   getMonthBudgetTarget, getQuoteBudgetForYear, normalizeQuoteBudget, normalizeQuoteBudgetStore,
@@ -114,12 +115,7 @@ const exportQuotesCsv = (
   URL.revokeObjectURL(a.href);
 };
 
-const loadQuotesLocal = (): CrmQuote[] => {
-  try {
-    const v = localStorage.getItem(LS_QUOTES);
-    return v ? (JSON.parse(v) as CrmQuote[]) : [];
-  } catch { return []; }
-};
+const loadQuotesLocalFromTab = (): CrmQuote[] => loadQuotesLocal();
 
 const normalizeQuote = (q: CrmQuote): CrmQuote =>
   normalizeCrmQuote(q as CrmQuote & Record<string, unknown>);
@@ -777,7 +773,27 @@ const CrmQuotesTab: React.FC<{
   const [attTick, setAttTick] = React.useState(0);
   const delTimerRef = React.useRef<ReturnType<typeof setTimeout> | null>(null);
   const quotesRef = React.useRef(quotes);
+  const lastLocalEditAtRef = React.useRef(0);
+  const pendingSyncAttemptedRef = React.useRef(new Set<string>());
   quotesRef.current = quotes;
+
+  const touchLocalEdit = (): void => { lastLocalEditAtRef.current = Date.now(); };
+
+  const pushPendingQuotesToSharePoint = React.useCallback((rows: CrmQuote[]): void => {
+    for (const q of rows) {
+      if (q.spId || pendingSyncAttemptedRef.current.has(q.id)) continue;
+      pendingSyncAttemptedRef.current.add(q.id);
+      void upsertQuoteToSharePoint(spService, q).then(saved => {
+        if (!saved.spId) return;
+        setQuotes(cur => {
+          const updated = cur.map(x => x.id === saved.id ? { ...x, spId: saved.spId } : x);
+          quotesRef.current = updated;
+          try { localStorage.setItem(LS_QUOTES, JSON.stringify(updated)); } catch { /* ignore */ }
+          return updated;
+        });
+      }).catch(() => undefined);
+    }
+  }, [spService]);
 
   const syncQuoteChanges = React.useCallback((before: CrmQuote[], after: CrmQuote[]): void => {
     const beforeMap = new Map(before.map(q => [q.id, q]));
@@ -804,45 +820,39 @@ const CrmQuotesTab: React.FC<{
     quotesRef.current = processed;
     setQuotes(processed);
     try { localStorage.setItem(LS_QUOTES, JSON.stringify(processed)); } catch { /* ignore */ }
-    if (JSON.stringify(before) !== JSON.stringify(processed)) {
-      syncQuoteChanges(before.length ? before : raw.map(normalizeQuote), processed);
+    if (before.length > 0 && JSON.stringify(before) !== JSON.stringify(processed)) {
+      syncQuoteChanges(before, processed);
     }
-  }, [syncQuoteChanges]);
+    pushPendingQuotesToSharePoint(processed);
+  }, [syncQuoteChanges, pushPendingQuotesToSharePoint]);
 
   const reload = React.useCallback(async (): Promise<void> => {
     try {
-      const remote = await loadQuotesRemote(spService);
-      if (remote !== null) {
-        const processed = processQuotes(remote);
-        if (JSON.stringify(processed) !== JSON.stringify(quotesRef.current)) {
-          const before = quotesRef.current;
-          quotesRef.current = processed;
-          setQuotes(processed);
-          try { localStorage.setItem(LS_QUOTES, JSON.stringify(processed)); } catch { /* ignore */ }
-          syncQuoteChanges(before, processed);
+      const skipQuotePull = Date.now() - lastLocalEditAtRef.current < 15000;
+      if (!skipQuotePull) {
+        const remote = await loadQuotesRemote(spService);
+        if (remote !== null) {
+          const merged = mergeQuotesWithLocal(quotesRef.current, remote);
+          const processed = processQuotes(merged);
+          if (JSON.stringify(processed) !== JSON.stringify(quotesRef.current)) {
+            const before = quotesRef.current;
+            quotesRef.current = processed;
+            setQuotes(processed);
+            try { localStorage.setItem(LS_QUOTES, JSON.stringify(processed)); } catch { /* ignore */ }
+            syncQuoteChanges(before, processed);
+          }
         }
       }
       const projs = await loadProjectsFromSharePoint(spService);
       setWonProjects(projs);
     } catch {
-      setQuotes(processQuotes(loadQuotesLocal()));
+      if (Date.now() - lastLocalEditAtRef.current >= 15000) {
+        setQuotes(processQuotes(loadQuotesLocalFromTab()));
+      }
     }
   }, [spService, syncQuoteChanges]);
 
   React.useEffect(() => {
-    if (seedQuotes?.length) {
-      applyProcessedQuotes(seedQuotes);
-      setReady(true);
-      onSeedApplied?.();
-      void Promise.all([
-        loadProjectsFromSharePoint(spService),
-        loadQuoteBudget(spService),
-      ]).then(([projs, b]) => {
-        setWonProjects(projs);
-        setBudgetStore(b);
-      });
-      return;
-    }
     let cancelled = false;
     void (async () => {
       try {
@@ -852,18 +862,36 @@ const CrmQuotesTab: React.FC<{
           loadQuoteBudget(spService),
         ]);
         if (!cancelled) {
-          applyProcessedQuotes(data);
+          const merged = mergeQuotesWithLocal(quotesRef.current, data);
+          applyProcessedQuotes(merged);
           setWonProjects(projs);
           setBudgetStore(b);
         }
       } catch {
-        if (!cancelled) applyProcessedQuotes(loadQuotesLocal());
+        if (!cancelled) {
+          applyProcessedQuotes(processQuotes(quotesRef.current.length ? quotesRef.current : loadQuotesLocalFromTab()));
+        }
       } finally {
         if (!cancelled) setReady(true);
       }
     })();
     return () => { cancelled = true; };
-  }, [spService, seedQuotes, applyProcessedQuotes]); // eslint-disable-line react-hooks/exhaustive-deps
+  }, [spService, applyProcessedQuotes]);
+
+  React.useEffect(() => {
+    if (!seedQuotes?.length) return;
+    touchLocalEdit();
+    applyProcessedQuotes(seedQuotes);
+    setReady(true);
+    onSeedApplied?.();
+    void Promise.all([
+      loadProjectsFromSharePoint(spService),
+      loadQuoteBudget(spService),
+    ]).then(([projs, b]) => {
+      setWonProjects(projs);
+      setBudgetStore(b);
+    });
+  }, [seedQuotes, spService, applyProcessedQuotes, onSeedApplied]);
 
   React.useEffect(() => {
     if (!ready) return;
@@ -968,6 +996,7 @@ const CrmQuotesTab: React.FC<{
   });
 
   const persistQuotes = (next: CrmQuote[]): void => {
+    touchLocalEdit();
     const processed = processQuotes(next);
     const prev = quotesRef.current;
     quotesRef.current = processed;

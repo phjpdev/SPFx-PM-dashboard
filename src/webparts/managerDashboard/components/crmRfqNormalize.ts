@@ -149,6 +149,7 @@ export function normalizeCrmQuote(raw: Partial<CrmQuote> & Record<string, unknow
     lostAt: normalizeCrmDate(String(raw.lostAt || ''), year) || undefined,
     archived: !!raw.archived,
     archivedAt: normalizeCrmDate(String(raw.archivedAt || ''), year) || undefined,
+    ...(typeof raw.spId === 'number' ? { spId: raw.spId } : {}),
   };
 }
 

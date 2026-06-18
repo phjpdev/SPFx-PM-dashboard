@@ -1117,12 +1117,13 @@ const CrmBoard: React.FC<CrmBoardProps> = ({ spService }) => {
     setCrmReady(false);
     void (async () => {
       try {
-        // Ensure all 5 CRM lists exist — skip if already confirmed in this browser.
-        const listsOk = localStorage.getItem('3edge-crm-lists-ok');
+        // Provision CRM lists once per browser version (field cache avoids repeated POST /fields).
+        const CRM_LISTS_KEY = '3edge-crm-lists-v2';
+        const listsOk = localStorage.getItem(CRM_LISTS_KEY);
         if (!listsOk) {
           try {
             await spService.ensureAllCrmLists();
-            localStorage.setItem('3edge-crm-lists-ok', '1');
+            localStorage.setItem(CRM_LISTS_KEY, '1');
           } catch { /* requires site owner — ignored */ }
         }
         const [data, delta] = await Promise.all([
