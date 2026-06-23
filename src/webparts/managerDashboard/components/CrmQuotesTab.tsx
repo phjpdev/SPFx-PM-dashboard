@@ -765,6 +765,8 @@ const CrmQuotesTab: React.FC<{
   const [ready, setReady] = React.useState(false);
   const [search, setSearch] = React.useState('');
   const [statusFilter, setStatusFilter] = React.useState('all');
+  const [dateFrom, setDateFrom] = React.useState('');
+  const [dateTo, setDateTo] = React.useState('');
   const [archiveView, setArchiveView] = React.useState(false);
   const [modal, setModal] = React.useState<CrmQuote | null>(null);
   const [lostQuote, setLostQuote] = React.useState<CrmQuote | null>(null);
@@ -917,6 +919,8 @@ const CrmQuotesTab: React.FC<{
     return ref.length >= 4 ? ref.substring(0, 4) : String(selectedYear);
   };
 
+  const quoteFilterDate = (q: CrmQuote): string => q.quotedDate || q.dateReceived || '';
+
   const yearOptions = React.useMemo(() => {
     const yrs = new Set<number>();
     yrs.add(new Date().getFullYear());
@@ -986,6 +990,12 @@ const CrmQuotesTab: React.FC<{
   const listSource = archiveView ? archivedQuotes : yearQuotes;
   const filtered = listSource.filter(item => {
     if (!archiveView && statusFilter !== 'all' && item.status !== statusFilter) return false;
+    if (dateFrom || dateTo) {
+      const ref = quoteFilterDate(item);
+      if (!ref) return false;
+      if (dateFrom && ref < dateFrom) return false;
+      if (dateTo && ref > dateTo) return false;
+    }
     if (!q) return true;
     return (
       item.quoteNum.toLowerCase().includes(q) ||
@@ -1186,6 +1196,33 @@ const CrmQuotesTab: React.FC<{
           <option value="all">All statuses</option>
           {QUOTE_STATUSES.map(s => <option key={s} value={s}>{s}</option>)}
         </select>
+        <div style={{ display: 'flex', alignItems: 'center', gap: 6, flexShrink: 0 }}>
+          <input
+            type="date"
+            value={dateFrom}
+            onChange={e => setDateFrom(e.target.value)}
+            title="Quoted from"
+            style={{ padding: '6px 8px', borderRadius: 4, border: `1px solid ${C.borderMd}`, background: C.surface, fontFamily: FF, fontSize: 12, color: C.text, width: 130, boxSizing: 'border-box' }}
+          />
+          <span style={{ fontFamily: FF, fontSize: 12, color: C.muted }}>–</span>
+          <input
+            type="date"
+            value={dateTo}
+            onChange={e => setDateTo(e.target.value)}
+            title="Quoted to"
+            min={dateFrom || undefined}
+            style={{ padding: '6px 8px', borderRadius: 4, border: `1px solid ${C.borderMd}`, background: C.surface, fontFamily: FF, fontSize: 12, color: C.text, width: 130, boxSizing: 'border-box' }}
+          />
+          {(dateFrom || dateTo) && (
+            <button
+              type="button"
+              onClick={() => { setDateFrom(''); setDateTo(''); }}
+              style={{ padding: '6px 8px', borderRadius: 4, border: `1px solid ${C.borderMd}`, background: C.surface, fontFamily: FF, fontSize: 11, color: C.sub, cursor: 'pointer', whiteSpace: 'nowrap' }}
+            >
+              Clear
+            </button>
+          )}
+        </div>
         <div style={{ flex: 1 }} />
         <button
           onClick={() => setArchiveView(v => !v)}
@@ -1280,7 +1317,7 @@ const CrmQuotesTab: React.FC<{
           </tbody>
         </table>
         <div style={{ padding: '8px 14px', borderTop: `1px solid ${C.border}`, fontFamily: FF, fontSize: 11, color: C.muted, background: C.thBg }}>
-          {filtered.length} of {listSource.length} quote{listSource.length !== 1 ? 's' : ''} ({year}{archiveView ? ', archived — lost 1+ week' : ''})
+          {filtered.length} of {listSource.length} quote{listSource.length !== 1 ? 's' : ''} ({year}{archiveView ? ', archived — lost 1+ week' : ''}{(dateFrom || dateTo) ? `, ${dateFrom || '…'} – ${dateTo || '…'}` : ''})
         </div>
       </div>
 
