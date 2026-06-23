@@ -745,9 +745,7 @@ export class SharePointService {
       this._listFieldNames.set(listTitle, names);
       return names;
     } catch {
-      const empty = new Set<string>();
-      this._listFieldNames.set(listTitle, empty);
-      return empty;
+      return new Set<string>();
     }
   }
 
@@ -763,8 +761,7 @@ export class SharePointService {
       });
       names.add(key);
     } catch {
-      // Column likely already exists — mark as present so we do not retry endlessly.
-      names.add(key);
+      // Leave cache unchanged so a later ensure pass can retry (e.g. after permissions fix).
     }
   }
 
@@ -1159,7 +1156,140 @@ export class SharePointService {
     return result;
   }
 
-  // ── CRM Quotes ─────────────────────────────────────────────────────────────
+  private omitNulls(body: Record<string, unknown>): Record<string, unknown> {
+    const out: Record<string, unknown> = {};
+    for (const [k, v] of Object.entries(body)) {
+      if (v !== null && v !== undefined) out[k] = v;
+    }
+    return out;
+  }
+
+  private quotePayloadBody(quote: CrmQuote): Record<string, unknown> {
+    return {
+      Title: quote.quoteNum || quote.id || '',
+      crmId: quote.id || '',
+      recordNum: quote.quoteNum || '',
+      payloadJson: JSON.stringify(quote),
+    };
+  }
+
+  private async filterBodyToListFields(
+    listTitle: string,
+    body: Record<string, unknown>,
+    payload?: object,
+  ): Promise<Record<string, unknown>> {
+    const names = await this.loadListFieldNames(listTitle);
+    const out: Record<string, unknown> = {};
+    for (const [k, v] of Object.entries(body)) {
+      if (v === null || v === undefined) continue;
+      if (names.has(k.toLowerCase())) out[k] = v;
+    }
+    if (!out.Title && body.Title) out.Title = body.Title;
+    if (payload && names.has('payloadjson')) {
+      out.payloadJson = JSON.stringify(payload);
+    }
+    return out;
+  }
+
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  private mapCrmQuoteRow(i: any): CrmQuote {
+    const fromCols: CrmQuote = {
+      ...this.mapEnquiryCore(i),
+      id: String(i.crmId || String(i.Id)),
+      spId: Number(i.Id),
+      quoteNum: i.quoteNum || i.Title || '',
+      rfqId: i.rfqId || '',
+      rfqNum: i.rfqNum || '',
+      quotedDate: this.parseDate(i.quotedDate),
+      createQuoteXero: !!i.createQuoteXero,
+      relatedRfqId: i.relatedRfqId || '',
+      lostReason: i.lostReason || '',
+      status: (i.status || 'Draft') as CrmQuoteStatus,
+      lostAt: this.parseDate(i.lostAt),
+      archived: !!i.archived,
+      archivedAt: this.parseDate(i.archivedAt),
+    };
+    if (!i.payloadJson) return fromCols;
+    const payload = this.parseJson<Partial<CrmQuote>>(i.payloadJson, {});
+    if (!payload || typeof payload !== 'object') return fromCols;
+    return {
+      ...payload,
+      ...fromCols,
+      id: fromCols.id,
+      spId: fromCols.spId,
+      quoteNum: fromCols.quoteNum || payload.quoteNum || '',
+      rfqId: fromCols.rfqId || payload.rfqId || '',
+      rfqNum: fromCols.rfqNum || payload.rfqNum || '',
+    };
+  }
+
+  private async postCrmQuoteItem(quote: CrmQuote): Promise<number> {
+    const t = SharePointService.oDataStr(LIST_CRM_QUOTES);
+    const fullBody = this.omitNulls({ ...this.quoteBody(quote) } as Record<string, unknown>);
+
+    try {
+      const r = await this.spPost(`/_api/web/lists/getbytitle('${t}')/items`, fullBody);
+      return Number(r.Id);
+    } catch {
+      this._listFieldNames.delete(LIST_CRM_QUOTES);
+      const names = await this.loadListFieldNames(LIST_CRM_QUOTES);
+      if (names.size > 0) {
+        const filtered = await this.filterBodyToListFields(LIST_CRM_QUOTES, fullBody, quote);
+        if (Object.keys(filtered).length > 0) {
+          try {
+            const r = await this.spPost(`/_api/web/lists/getbytitle('${t}')/items`, filtered);
+            return Number(r.Id);
+          } catch { /* fall through to payloadJson row */ }
+        }
+      }
+      const r = await this.spPost(
+        `/_api/web/lists/getbytitle('${t}')/items`,
+        this.quotePayloadBody(quote),
+      );
+      return Number(r.Id);
+    }
+  }
+
+  private async mergeCrmQuoteItem(spId: number, quote: CrmQuote): Promise<void> {
+    const t = SharePointService.oDataStr(LIST_CRM_QUOTES);
+    const fullBody = this.omitNulls({ ...this.quoteBody(quote) } as Record<string, unknown>);
+
+    try {
+      await this.spMerge(`/_api/web/lists/getbytitle('${t}')/items(${spId})`, fullBody);
+    } catch {
+      this._listFieldNames.delete(LIST_CRM_QUOTES);
+      const filtered = await this.filterBodyToListFields(LIST_CRM_QUOTES, fullBody, quote);
+      if (Object.keys(filtered).length > 0) {
+        try {
+          await this.spMerge(`/_api/web/lists/getbytitle('${t}')/items(${spId})`, filtered);
+          return;
+        } catch { /* fall through */ }
+      }
+      await this.spMerge(
+        `/_api/web/lists/getbytitle('${t}')/items(${spId})`,
+        this.quotePayloadBody(quote),
+      );
+    }
+  }
+
+  private async ensureCrmQuotesListFields(): Promise<void> {
+    const ef = (name: string, kind: number): Promise<void> =>
+      this.ensureCrmListField(LIST_CRM_QUOTES, name, kind);
+
+    const coreText = ['personId', 'organizationId', 'projectTitle', 'discipline',
+      'assignedTo', 'source', 'revisionVersionEng', 'revisionVersionArch'];
+    const coreNote = ['companyAddress', 'projectAddress', 'notes'];
+    const coreDate = ['dateReceived', 'quoteRequiredBy', 'engineerDrawingDate', 'architectDrawingDate'];
+    const coreBool = ['engineerDrawingReceived', 'architectDrawingReceived'];
+    const coreNum = ['projectValue', 'approximateHours', 'rfiAllowed'];
+
+    await this.ensureCrmList(LIST_CRM_QUOTES, 'CRM Quotes');
+    for (const n of ['quoteNum', 'rfqId', 'rfqNum', 'lostReason', 'status', 'relatedRfqId', ...coreText]) await ef(n, 2);
+    for (const n of coreNote) await ef(n, 3);
+    for (const n of ['quotedDate', 'lostAt', 'archivedAt', ...coreDate]) await ef(n, 4);
+    for (const n of ['createQuoteXero', 'archived', ...coreBool]) await ef(n, 8);
+    for (const n of coreNum) await ef(n, 9);
+  }
 
   private quoteBody(d: CrmQuote): object {
     return {
@@ -1182,26 +1312,18 @@ export class SharePointService {
 
   public async loadCrmQuotes(): Promise<CrmQuote[]> {
     const t = SharePointService.oDataStr(LIST_CRM_QUOTES);
-    const d = await this.spGet(
-      `/_api/web/lists/getbytitle('${t}')/items?$top=2000&$orderby=quoteNum asc`,
-    );
+    let d: { value?: unknown[] };
+    try {
+      d = await this.spGet(
+        `/_api/web/lists/getbytitle('${t}')/items?$top=2000&$orderby=quoteNum asc`,
+      );
+    } catch {
+      d = await this.spGet(
+        `/_api/web/lists/getbytitle('${t}')/items?$top=2000&$orderby=Id asc`,
+      );
+    }
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
-    const raw: CrmQuote[] = (d.value || []).map((i: any) => ({
-      ...this.mapEnquiryCore(i),
-      id: String(i.crmId || String(i.Id)),
-      spId: Number(i.Id),
-      quoteNum: i.quoteNum || i.Title || '',
-      rfqId: i.rfqId || '',
-      rfqNum: i.rfqNum || '',
-      quotedDate: this.parseDate(i.quotedDate),
-      createQuoteXero: !!i.createQuoteXero,
-      relatedRfqId: i.relatedRfqId || '',
-      lostReason: i.lostReason || '',
-      status: (i.status || 'Draft') as CrmQuoteStatus,
-      lostAt: this.parseDate(i.lostAt),
-      archived: !!i.archived,
-      archivedAt: this.parseDate(i.archivedAt),
-    }));
+    const raw: CrmQuote[] = (d.value || []).map((i: any) => this.mapCrmQuoteRow(i));
     return SharePointService.dedupeById(raw);
   }
 
@@ -1334,13 +1456,12 @@ export class SharePointService {
   }
 
   public async addCrmQuote(quote: CrmQuote): Promise<number> {
-    const t = SharePointService.oDataStr(LIST_CRM_QUOTES);
-    const r = await this.spPost(`/_api/web/lists/getbytitle('${t}')/items`, this.quoteBody(quote));
-    return Number(r.Id);
+    await this.ensureCrmQuotesListReady();
+    return this.postCrmQuoteItem(quote);
   }
   public async updateCrmQuote(spId: number, quote: CrmQuote): Promise<void> {
-    const t = SharePointService.oDataStr(LIST_CRM_QUOTES);
-    await this.spMerge(`/_api/web/lists/getbytitle('${t}')/items(${spId})`, this.quoteBody(quote));
+    await this.ensureCrmQuotesListReady();
+    await this.mergeCrmQuoteItem(spId, quote);
   }
   public async deleteCrmQuoteById(spId: number): Promise<void> {
     await this.spDelete(`/_api/web/lists/getbytitle('${SharePointService.oDataStr(LIST_CRM_QUOTES)}')/items(${spId})`);
@@ -1371,12 +1492,22 @@ export class SharePointService {
   /** Create all 5 CRM lists with proper columns if they do not already exist. */
   public ensureAllCrmLists(): Promise<void> {
     if (!this._ensureAllCrmListsTask) {
-      this._ensureAllCrmListsTask = this.ensureAllCrmListsInner();
+      this._ensureAllCrmListsTask = this.ensureAllCrmListsInner().catch((err) => {
+        this._ensureAllCrmListsTask = null;
+        throw err;
+      });
     }
     return this._ensureAllCrmListsTask;
   }
 
+  /** Ensure the quotes list exists with columns — called before every quote write. */
+  public async ensureCrmQuotesListReady(): Promise<void> {
+    this._listFieldNames.delete(LIST_CRM_QUOTES);
+    await this.ensureCrmQuotesListFields();
+  }
+
   private async ensureAllCrmListsInner(): Promise<void> {
+    this._listFieldNames.clear();
     const ef = (list: string, name: string, kind: number): Promise<void> =>
       this.ensureCrmListField(list, name, kind);
 
@@ -1402,12 +1533,7 @@ export class SharePointService {
     for (const n of ['createQuoteXero', ...coreBool]) await ef(LIST_CRM_RFQS, n, 8);
     for (const n of coreNum) await ef(LIST_CRM_RFQS, n, 9);
 
-    await this.ensureCrmList(LIST_CRM_QUOTES, 'CRM Quotes');
-    for (const n of ['quoteNum', 'rfqId', 'rfqNum', 'lostReason', 'status', 'relatedRfqId', ...coreText]) await ef(LIST_CRM_QUOTES, n, 2);
-    for (const n of coreNote) await ef(LIST_CRM_QUOTES, n, 3);
-    for (const n of ['quotedDate', 'lostAt', 'archivedAt', ...coreDate]) await ef(LIST_CRM_QUOTES, n, 4);
-    for (const n of ['createQuoteXero', 'archived', ...coreBool]) await ef(LIST_CRM_QUOTES, n, 8);
-    for (const n of coreNum) await ef(LIST_CRM_QUOTES, n, 9);
+    await this.ensureCrmQuotesListFields();
 
     await this.ensureCrmList(LIST_CRM_WIP, 'CRM Work In Progress');
     for (const n of ['projNum', 'quoteId', 'quoteNum', 'rfqId', 'rfqNum', ...coreText]) await ef(LIST_CRM_WIP, n, 2);
