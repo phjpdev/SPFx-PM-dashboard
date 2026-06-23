@@ -120,7 +120,7 @@ const loadQuotesLocalFromTab = (): CrmQuote[] => loadQuotesLocal();
 const normalizeQuote = (q: CrmQuote): CrmQuote =>
   normalizeCrmQuote(q as CrmQuote & Record<string, unknown>);
 
-const LOST_ARCHIVE_MS = 28 * 24 * 60 * 60 * 1000;
+const LOST_ARCHIVE_MS = 7 * 24 * 60 * 60 * 1000;
 
 const todayIso = (): string => {
   const t = new Date();
@@ -532,7 +532,7 @@ const QuoteModal: React.FC<{
               </select>
             </div>
             <div>
-              {(d.status === 'Sent' || d.status === 'Lost') && (
+              {(d.status === 'Sent' || d.status === 'Lost' || d.status === 'Follow up' || d.status === 'Pending') && (
                 <>
                   <label style={ml}>Date quote sent</label>
                   <input
@@ -1225,7 +1225,7 @@ const CrmQuotesTab: React.FC<{
                   {quotes.length === 0
                     ? 'No quotes yet — move an RFQ at Ready to Quote stage using the Quote button.'
                     : archiveView
-                      ? 'No archived quotes yet — lost quotes are archived automatically after 4 weeks.'
+                      ? 'No archived quotes yet — lost quotes are archived automatically after 1 week.'
                       : 'No results match your search.'}
                 </td>
               </tr>
@@ -1252,7 +1252,7 @@ const CrmQuotesTab: React.FC<{
                   <DisciplineBadges discipline={item.discipline} />
                 </td>
                 <td style={{ ...tdBase, fontFamily: FF, fontSize: 12, fontWeight: 600, color: C.text, whiteSpace: 'nowrap' }}>
-                  {item.quotedDate && (item.status === 'Sent' || item.status === 'Lost') ? fmtShortDate(item.quotedDate) : '—'}
+                  {item.quotedDate ? fmtShortDate(item.quotedDate) : '—'}
                 </td>
                 <td style={{ ...tdBase, fontFamily: FF, fontSize: 12, fontWeight: 600, color: C.text }}>{item.projectValue ? fmtMoney(item.projectValue) : '—'}</td>
                 <td style={{ ...tdBase, fontFamily: FF, fontSize: 12, fontWeight: 600, color: C.sub }}>{item.approximateHours ? String(item.approximateHours) : '—'}</td>
@@ -1280,7 +1280,7 @@ const CrmQuotesTab: React.FC<{
           </tbody>
         </table>
         <div style={{ padding: '8px 14px', borderTop: `1px solid ${C.border}`, fontFamily: FF, fontSize: 11, color: C.muted, background: C.thBg }}>
-          {filtered.length} of {listSource.length} quote{listSource.length !== 1 ? 's' : ''} ({year}{archiveView ? ', archived — lost 4+ weeks' : ''})
+          {filtered.length} of {listSource.length} quote{listSource.length !== 1 ? 's' : ''} ({year}{archiveView ? ', archived — lost 1+ week' : ''})
         </div>
       </div>
 

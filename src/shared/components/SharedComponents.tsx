@@ -38,13 +38,28 @@ export const Tag: React.FC<{ s: string; small?: boolean }> = ({ s, small }) => {
 };
 
 // ── HrsBar ───────────────────────────────────────────────────────────────────
-export const HrsBar: React.FC<{ allowed: number; used: number }> = ({ allowed, used }) => {
+export const HrsBar: React.FC<{ allowed: number; used: number; compact?: boolean }> = ({ allowed, used, compact }) => {
   const pct = allowed > 0 ? Math.min(100, Math.round((used / allowed) * 100)) : null;
   const over = used > allowed;
   const col = hrsColor(pct, over);
   if (pct === null) return <span style={{ fontFamily: 'Montserrat', fontWeight: 600, fontSize: 12, color: 'var(--t4)' }}>—</span>;
   const usedR = Math.round(used * 10) / 10;
   const rem = Math.abs(Math.round((used - allowed) * 10) / 10).toFixed(1);
+  if (compact) {
+    return (
+      <div>
+        <div style={{ fontFamily: 'Montserrat', fontWeight: 600, fontSize: 10.5, color: 'var(--t2)', whiteSpace: 'nowrap' }}>
+          {usedR}<span style={{ color: 'var(--t4)', fontWeight: 600 }}> / {allowed}h</span>
+        </div>
+        <div style={{ fontFamily: 'Montserrat', fontWeight: over ? 700 : 600, fontSize: 10, color: col, margin: '2px 0 3px' }}>
+          {over ? '+' : ''}{rem}h {over ? 'OVER' : 'left'}
+        </div>
+        <div style={{ height: 5, background: pct === 0 ? '#ccc' : 'var(--s2)', borderRadius: 3, overflow: 'hidden' }}>
+          <div style={{ height: '100%', width: `${pct}%`, background: col, borderRadius: 3, transition: 'width .4s' }} />
+        </div>
+      </div>
+    );
+  }
   return (
     <div style={{ minWidth: 140 }}>
       <div style={{ display: 'flex', justifyContent: 'space-between', fontFamily: 'Montserrat', fontWeight: 600, fontSize: 11.5, marginBottom: 4 }}>

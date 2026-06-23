@@ -1982,20 +1982,20 @@ const ManagerDashboard: React.FC<IManagerDashboardProps> = (props) => {
   const getEwos = (parentId: string): IProject[] => projects.filter(p => p.isEwo && p.parentId === parentId);
 
   // ── Th helper component
-  const Th: React.FC<{ col: string; label: string; rfi?: boolean }> = ({ col, label, rfi: isRfi }) => {
+  const Th: React.FC<{ col: string; label: string; rfi?: boolean; pad?: string }> = ({ col, label, rfi: isRfi, pad }) => {
     const active = isRfi ? rSCol : sCol;
     const dir = isRfi ? rSDir : sDir;
     return (
       <th onClick={() => isRfi ? onRSort(col) : onSort(col)}
-        style={{ padding: '8px 6px', fontFamily: 'Montserrat', fontWeight: 700, fontSize: 11, letterSpacing: '.1em', textTransform: 'uppercase', color: active === col ? 'var(--3eg)' : 'var(--t3)', cursor: 'pointer', whiteSpace: 'nowrap', borderBottom: '2px solid var(--bd)', textAlign: 'left', userSelect: 'none', background: 'var(--s2)' }}>
+        style={{ padding: pad || '8px 6px', fontFamily: 'Montserrat', fontWeight: 700, fontSize: 11, letterSpacing: '.1em', textTransform: 'uppercase', color: active === col ? 'var(--3eg)' : 'var(--t3)', cursor: 'pointer', whiteSpace: 'nowrap', borderBottom: '2px solid var(--bd)', textAlign: 'left', userSelect: 'none', background: 'var(--s2)' }}>
         {label}<span style={{ opacity: 0.6 }}>{sortArrow(col, active, dir)}</span>
       </th>
     );
   };
 
   // ── Plain th
-  const ThPlain: React.FC<{ label: string }> = ({ label }) => (
-    <th style={{ padding: '8px 6px', fontFamily: 'Montserrat', fontWeight: 700, fontSize: 11, letterSpacing: '.1em', textTransform: 'uppercase', color: 'var(--t3)', whiteSpace: 'nowrap', borderBottom: '2px solid var(--bd)', textAlign: 'left', background: 'var(--s2)' }}>{label}</th>
+  const ThPlain: React.FC<{ label: string; pad?: string }> = ({ label, pad }) => (
+    <th style={{ padding: pad || '8px 6px', fontFamily: 'Montserrat', fontWeight: 700, fontSize: 11, letterSpacing: '.1em', textTransform: 'uppercase', color: 'var(--t3)', whiteSpace: 'nowrap', borderBottom: '2px solid var(--bd)', textAlign: 'left', background: 'var(--s2)' }}>{label}</th>
   );
 
   const headerBg: React.CSSProperties = {
@@ -2175,21 +2175,35 @@ const ManagerDashboard: React.FC<IManagerDashboardProps> = (props) => {
 
             <div style={{ background: 'var(--s1)', border: '1px solid var(--bd)', borderRadius: 8, boxShadow: '0 1px 6px rgba(0,0,0,.06)' }}>
               <div style={{ overflowX: 'auto', borderRadius: 8 }}>
-                <table style={{ width: '100%', borderCollapse: 'collapse', minWidth: 900 }}>
+                <table style={{ width: '100%', borderCollapse: 'collapse', minWidth: 1100, tableLayout: 'fixed' }}>
+                  <colgroup>
+                    <col style={{ width: 32 }} />
+                    <col style={{ width: 88 }} />
+                    <col style={{ width: 84 }} />
+                    <col style={{ width: '20%' }} />
+                    <col style={{ width: '11%' }} />
+                    <col style={{ width: '10%' }} />
+                    <col style={{ width: 88 }} />
+                    <col style={{ width: 92 }} />
+                    <col style={{ width: 92 }} />
+                    <col style={{ width: 80 }} />
+                    <col style={{ width: 108 }} />
+                    <col style={{ width: 76 }} />
+                  </colgroup>
                   <thead>
                     <tr>
-                      <th style={{ width: 20, background: 'var(--s2)', borderBottom: '2px solid var(--bd)' }} />
-                      <Th col="projNum" label="Project #" />
-                      <Th col="quoteNum" label="Quote #" />
-                      <Th col="name" label="Name" />
-                      <Th col="company" label="Company" />
-                      <Th col="contact" label="Contact" />
-                      <Th col="hrsUsed" label="Hours" />
-                      <Th col="startDate" label="Start" />
-                      <Th col="finishDate" label="Finish" />
-                      <ThPlain label="RFIs" />
-                      <Th col="status" label="Status" />
-                      <ThPlain label="Actions" />
+                      <th style={{ width: 32, background: 'var(--s2)', borderBottom: '2px solid var(--bd)' }} />
+                      <Th col="projNum" label="Project #" pad="8px 14px" />
+                      <Th col="quoteNum" label="Quote #" pad="8px 14px" />
+                      <Th col="name" label="Name" pad="8px 14px" />
+                      <Th col="company" label="Company" pad="8px 10px" />
+                      <Th col="contact" label="Contact" pad="8px 10px" />
+                      <Th col="hrsUsed" label="Hours" pad="8px 10px" />
+                      <Th col="startDate" label="Start" pad="8px 10px" />
+                      <Th col="finishDate" label="Finish" pad="8px 10px" />
+                      <ThPlain label="RFIs" pad="8px 10px" />
+                      <Th col="status" label="Status" pad="8px 8px" />
+                      <ThPlain label="Actions" pad="8px 10px" />
                     </tr>
                   </thead>
                   <tbody>
@@ -2209,7 +2223,7 @@ const ManagerDashboard: React.FC<IManagerDashboardProps> = (props) => {
                           <tr style={{ background: rowBg, borderBottom: '1px solid var(--s3)' }}
                             onMouseEnter={e => { (e.currentTarget as HTMLTableRowElement).style.background = 'var(--s2)'; }}
                             onMouseLeave={e => { (e.currentTarget as HTMLTableRowElement).style.background = rowBg; }}>
-                            <td style={{ padding: '0 0 0 8px', width: 28, textAlign: 'center' }}>
+                            <td style={{ padding: '0 0 0 8px', width: 32, textAlign: 'center' }}>
                               {ewos.length > 0 && (
                                 <button onClick={() => setExp(prev => ({ ...prev, [p.id]: !prev[p.id] }))}
                                   style={{ background: 'var(--am2)', border: '1px solid var(--am)', borderRadius: 4, cursor: 'pointer', fontSize: 12, color: 'var(--am)', fontFamily: 'Montserrat', fontWeight: 700, padding: '2px 6px', lineHeight: 1, transition: 'all .15s' }}>
@@ -2217,10 +2231,10 @@ const ManagerDashboard: React.FC<IManagerDashboardProps> = (props) => {
                                 </button>
                               )}
                             </td>
-                            <td style={{ padding: '9px 6px', fontFamily: 'Montserrat', fontWeight: 700, fontSize: 13, color: 'var(--3eg)', whiteSpace: 'nowrap', cursor: 'pointer' }} onClick={() => openProjDetail(p)}>{p.projNum}</td>
-                            <td style={{ padding: '9px 6px', fontFamily: 'Montserrat', fontWeight: 600, fontSize: 12.5, color: 'var(--t3)', whiteSpace: 'nowrap' }}>{p.quoteNum || '—'}</td>
-                            <td style={{ padding: '9px 6px', fontFamily: 'Montserrat', fontWeight: 600, fontSize: 12, color: 'var(--t1)', cursor: 'pointer', maxWidth: 160, wordBreak: 'break-word' }} onClick={() => openProjDetail(p)}>
-                              <div>{p.name}</div>
+                            <td style={{ padding: '9px 14px', fontFamily: 'Montserrat', fontWeight: 700, fontSize: 13, color: 'var(--3eg)', whiteSpace: 'nowrap', cursor: 'pointer' }} onClick={() => openProjDetail(p)}>{p.projNum}</td>
+                            <td style={{ padding: '9px 14px', fontFamily: 'Montserrat', fontWeight: 600, fontSize: 12.5, color: 'var(--t3)', whiteSpace: 'nowrap' }}>{p.quoteNum || '—'}</td>
+                            <td style={{ padding: '9px 14px', fontFamily: 'Montserrat', fontWeight: 600, fontSize: 12, color: 'var(--t1)', cursor: 'pointer', lineHeight: 1.35, overflow: 'hidden', overflowWrap: 'break-word', wordBreak: 'normal' }} onClick={() => openProjDetail(p)}>
+                              <div style={{ display: '-webkit-box', WebkitLineClamp: 2, WebkitBoxOrient: 'vertical', overflow: 'hidden' }}>{p.name}</div>
                               {p.discipline && (
                                 <div style={{ display: 'flex', gap: 3, marginTop: 3, flexWrap: 'wrap' }}>
                                   {(p.discipline === 'Steel & Concrete' ? ['Steel', 'Concrete'] : [p.discipline]).map(disc => (
@@ -2235,14 +2249,18 @@ const ManagerDashboard: React.FC<IManagerDashboardProps> = (props) => {
                                 </div>
                               )}
                             </td>
-                            <td style={{ padding: '9px 6px', fontFamily: 'Montserrat', fontWeight: 600, fontSize: 11.5, color: 'var(--t2)', maxWidth: 120, wordBreak: 'break-word' }}>{p.company || '—'}</td>
-                            <td style={{ padding: '9px 6px', fontFamily: 'Montserrat', fontWeight: 600, fontSize: 11.5, color: 'var(--t2)', whiteSpace: 'nowrap' }}>{p.contact || '—'}</td>
-                            <td style={{ padding: '9px 6px', minWidth: 90 }}><HrsBar allowed={p.hrsAllowed} used={p.hrsUsed} /></td>
-                            <td style={{ padding: '9px 6px', fontFamily: 'Montserrat', fontWeight: 600, fontSize: 11.5, color: 'var(--t3)', whiteSpace: 'nowrap' }}>{fmtD(p.startDate)}</td>
-                            <td style={{ padding: '9px 6px', fontFamily: 'Montserrat', fontWeight: 600, fontSize: 11.5, color: 'var(--t3)', whiteSpace: 'nowrap' }}>{fmtD(p.finishDate)}</td>
-                            <td style={{ padding: '9px 6px', minWidth: 80 }}><RfiBar allowed={p.rfisAllowed} used={rfiCount} /></td>
-                            <td style={{ padding: '9px 4px', whiteSpace: 'nowrap' }}><Tag s={p.status} small /></td>
-                            <td style={{ padding: '9px 6px', whiteSpace: 'nowrap' }}>
+                            <td style={{ padding: '9px 10px', fontFamily: 'Montserrat', fontWeight: 600, fontSize: 11.5, color: 'var(--t2)', overflow: 'hidden', lineHeight: 1.3 }} title={p.company || ''}>
+                              <div style={{ display: '-webkit-box', WebkitLineClamp: 2, WebkitBoxOrient: 'vertical', overflow: 'hidden', overflowWrap: 'break-word', wordBreak: 'normal' }}>{p.company || '—'}</div>
+                            </td>
+                            <td style={{ padding: '9px 10px', fontFamily: 'Montserrat', fontWeight: 600, fontSize: 11.5, color: 'var(--t2)', overflow: 'hidden', lineHeight: 1.3 }} title={p.contact || ''}>
+                              <div style={{ display: '-webkit-box', WebkitLineClamp: 2, WebkitBoxOrient: 'vertical', overflow: 'hidden', overflowWrap: 'break-word', wordBreak: 'normal' }}>{p.contact || '—'}</div>
+                            </td>
+                            <td style={{ padding: '9px 10px', overflow: 'hidden' }}><HrsBar allowed={p.hrsAllowed} used={p.hrsUsed} compact /></td>
+                            <td style={{ padding: '9px 10px', fontFamily: 'Montserrat', fontWeight: 600, fontSize: 11.5, color: 'var(--t3)', whiteSpace: 'nowrap' }}>{fmtD(p.startDate)}</td>
+                            <td style={{ padding: '9px 10px', fontFamily: 'Montserrat', fontWeight: 600, fontSize: 11.5, color: 'var(--t3)', whiteSpace: 'nowrap' }}>{fmtD(p.finishDate)}</td>
+                            <td style={{ padding: '9px 10px', minWidth: 0, overflow: 'hidden' }}><RfiBar allowed={p.rfisAllowed} used={rfiCount} /></td>
+                            <td style={{ padding: '9px 8px', whiteSpace: 'nowrap' }}><Tag s={p.status} small /></td>
+                            <td style={{ padding: '9px 10px', whiteSpace: 'nowrap' }}>
                               <div style={{ display: 'flex', flexDirection: 'column', gap: 4, alignItems: 'flex-start' }}>
                                 <IBtn onClick={() => openProjDetail(p)} title="View details">View</IBtn>
                                 {isManager && <IBtn onClick={() => openProjForm(p)} title="Edit project">Edit</IBtn>}
@@ -2259,10 +2277,12 @@ const ManagerDashboard: React.FC<IManagerDashboardProps> = (props) => {
                                   <span style={{ color: 'var(--t4)', fontWeight: 400, fontSize: 10, marginRight: 4 }}>EWO</span>{ewo.ewoNum || ewo.projNum}
                                 </td>
                                 <td style={{ padding: '7px 6px', fontFamily: 'Montserrat', fontSize: 12, color: 'var(--t4)' }}>{ewo.quoteNum || '—'}</td>
-                                <td style={{ padding: '7px 6px', fontFamily: 'Montserrat', fontWeight: 600, fontSize: 12, color: 'var(--t2)', cursor: 'pointer', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }} onClick={() => openProjDetail(ewo)}>{ewo.name}</td>
+                                <td style={{ padding: '7px 6px', fontFamily: 'Montserrat', fontWeight: 600, fontSize: 12, color: 'var(--t2)', cursor: 'pointer', lineHeight: 1.35, overflowWrap: 'break-word', wordBreak: 'normal' }} onClick={() => openProjDetail(ewo)}>
+                                  <div style={{ display: '-webkit-box', WebkitLineClamp: 2, WebkitBoxOrient: 'vertical', overflow: 'hidden' }}>{ewo.name}</div>
+                                </td>
                                 <td style={{ padding: '7px 6px', fontFamily: 'Montserrat', fontWeight: 600, fontSize: 12, color: 'var(--t3)', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{ewo.company || '—'}</td>
                                 <td style={{ padding: '7px 6px', fontFamily: 'Montserrat', fontSize: 12, color: 'var(--t3)' }}>{ewo.contact || '—'}</td>
-                                <td style={{ padding: '7px 6px', minWidth: 130 }}><HrsBar allowed={ewo.hrsAllowed} used={ewo.hrsUsed} /></td>
+                                <td style={{ padding: '7px 6px' }}><HrsBar allowed={ewo.hrsAllowed} used={ewo.hrsUsed} compact /></td>
                                 <td style={{ padding: '7px 6px', fontFamily: 'Montserrat', fontSize: 12, color: 'var(--t4)' }}>{fmtD(ewo.startDate)}</td>
                                 <td style={{ padding: '7px 6px', fontFamily: 'Montserrat', fontSize: 12, color: 'var(--t4)' }}>{fmtD(ewo.finishDate)}</td>
                                 <td style={{ padding: '7px 6px', minWidth: 110 }}><RfiBar allowed={ewo.rfisAllowed} used={ewoRfis} /></td>
