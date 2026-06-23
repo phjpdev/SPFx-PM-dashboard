@@ -267,18 +267,44 @@ export function loadQuotesLocal(): CrmQuote[] {
   );
 }
 
-/** Keep local-only quotes until SharePoint has caught up (match by id, quote #, or RFQ id). */
+const quoteKeysMatch = (a: CrmQuote, b: CrmQuote): boolean =>
+  (!!a.id && a.id === b.id) ||
+  (!!a.quoteNum && !!b.quoteNum && a.quoteNum === b.quoteNum) ||
+  (!!a.rfqId && !!b.rfqId && a.rfqId === b.rfqId);
+
+const quoteRichness = (q: CrmQuote): number =>
+  (q.spId ? 8 : 0) +
+  (q.projectTitle ? 2 : 0) +
+  (q.personId ? 1 : 0) +
+  (q.organizationId ? 1 : 0) +
+  (q.projectValue ? 1 : 0);
+
+const mergeQuotePair = (a: CrmQuote, b: CrmQuote): CrmQuote => {
+  const richer = quoteRichness(a) >= quoteRichness(b) ? a : b;
+  const other = richer === a ? b : a;
+  return { ...other, ...richer, spId: other.spId || richer.spId };
+};
+
+/** Keep local-only quotes until SharePoint has caught up; prefer richer row when both match. */
 export function mergeQuotesWithLocal(local: CrmQuote[], remote: CrmQuote[]): CrmQuote[] {
-  const remoteIds = new Set(remote.map(q => q.id));
-  const remoteNums = new Set(remote.map(q => q.quoteNum).filter(Boolean));
-  const remoteRfqIds = new Set(remote.map(q => q.rfqId).filter(Boolean));
-  const pending = local.filter(q => {
-    if (remoteIds.has(q.id)) return false;
-    if (q.quoteNum && remoteNums.has(q.quoteNum)) return false;
-    if (q.rfqId && remoteRfqIds.has(q.rfqId)) return false;
-    return true;
-  });
-  return pending.length ? [...remote, ...pending] : remote;
+  const out: CrmQuote[] = [];
+  const usedLocal = new Set<string>();
+
+  for (const r of remote) {
+    const match = local.find(l => quoteKeysMatch(l, r) && !usedLocal.has(l.id));
+    if (match) {
+      usedLocal.add(match.id);
+      out.push(mergeQuotePair(match, r));
+    } else {
+      out.push(r);
+    }
+  }
+  for (const l of local) {
+    if (!usedLocal.has(l.id) && !out.some(q => quoteKeysMatch(q, l))) {
+      out.push(l);
+    }
+  }
+  return out;
 }
 
 export async function loadQuotesRemote(sp: SharePointService): Promise<CrmQuote[] | null> {
@@ -379,6 +405,7 @@ export async function deleteCompanyFromSharePoint(sp: SharePointService, company
 
 export async function upsertRfqToSharePoint(sp: SharePointService, rfq: CrmRfq): Promise<CrmRfq> {
   try {
+    await sp.ensureAllCrmLists();
     if (rfq.spId) { await sp.updateCrmRfq(rfq.spId, rfq); return rfq; }
     const spId = await sp.addCrmRfq(rfq);
     return { ...rfq, spId };
@@ -396,10 +423,15 @@ export async function deleteRfqFromSharePoint(sp: SharePointService, rfq: Pick<C
 
 export async function upsertQuoteToSharePoint(sp: SharePointService, quote: CrmQuote): Promise<CrmQuote> {
   try {
-    if (quote.spId) { await sp.updateCrmQuote(quote.spId, quote); return quote; }
+    await sp.ensureCrmQuotesListReady();
+    if (quote.spId) {
+      await sp.updateCrmQuote(quote.spId, quote);
+      return quote;
+    }
     const spId = await sp.addCrmQuote(quote);
     return { ...quote, spId };
-  } catch {
+  } catch (err) {
+    console.error('upsertQuoteToSharePoint failed', err);
     return quote;
   }
 }

@@ -3,7 +3,6 @@ import {
   loadProjectsFromSharePoint,
   loadQuotesFromSharePoint,
   loadQuotesLocal,
-  loadQuotesRemote,
   loadRfqsFromSharePoint,
   loadRfqsRemote,
   upsertRfqToSharePoint,
@@ -20,6 +19,7 @@ import type { CrmPerson, CrmCompany, CrmQuote, CrmRfq, CrmRfqDiscipline, CrmRfqS
 
 const FF = 'Montserrat,sans-serif';
 const LS_RFQS = '3edge-crm-rfqs';
+const LS_QUOTES = '3edge-crm-quotes';
 
 const C = {
   bg: '#f7f8fa', surface: '#ffffff', border: '#e2e5ea', borderMd: '#cdd1d9',
@@ -598,35 +598,39 @@ const CrmRfqTab: React.FC<{
 
   const confirmMoveToQuote = (rfq: CrmRfq, xeroQuoteNum: string): void => {
     void (async () => {
-      const remote = await loadQuotesRemote(spService);
-      const existingQuotes = (remote ?? loadQuotesLocal()).map(q => ({
+      const quote = rfqToQuote(rfq, normalizeQuoteNum(xeroQuoteNum));
+      copyRfqAttachmentsToQuote(rfq.id, quote.id);
+
+      const savedQuote = await upsertQuoteToSharePoint(spService, quote);
+      if (!savedQuote.spId) {
+        alert('Could not save quote to SharePoint. The RFQ was not moved — please try again.\n\nIf this keeps happening, ask a site owner to open the CRM tab once so list columns can be created.');
+        setMoveQuoteRfq(null);
+        return;
+      }
+
+      const existingQuotes = loadQuotesLocal().map(q => ({
         ...q,
         approximateHours: typeof q.approximateHours === 'number' ? q.approximateHours : 0,
       }));
-      const quote = rfqToQuote(rfq, normalizeQuoteNum(xeroQuoteNum));
-      copyRfqAttachmentsToQuote(rfq.id, quote.id);
-      const nextQuotes = [...existingQuotes, quote];
+      const nextQuotes = [
+        ...existingQuotes.filter(q => q.id !== savedQuote.id && q.quoteNum !== savedQuote.quoteNum && q.rfqId !== savedQuote.rfqId),
+        savedQuote,
+      ];
       const nextRfqs = rfqsRef.current.filter(x => x.id !== rfq.id);
 
-      try {
-        localStorage.setItem('3edge-crm-quotes', JSON.stringify(nextQuotes));
-        localStorage.setItem(LS_RFQS, JSON.stringify(nextRfqs));
-      } catch { /* ignore */ }
-
       setRfqs(nextRfqs);
+      setQuotes(nextQuotes);
       quotesRef.current = nextQuotes;
       rfqsRef.current = nextRfqs;
       setMoveQuoteRfq(null);
 
-      const savedQuote = await upsertQuoteToSharePoint(spService, quote);
-      const seededQuotes = nextQuotes.map(q => q.id === savedQuote.id ? savedQuote : q);
-      setQuotes(seededQuotes);
-      quotesRef.current = seededQuotes;
-      try { localStorage.setItem('3edge-crm-quotes', JSON.stringify(seededQuotes)); } catch { /* ignore */ }
-
-      onMovedToQuote?.(seededQuotes);
+      try {
+        localStorage.setItem(LS_QUOTES, JSON.stringify(nextQuotes));
+        localStorage.setItem(LS_RFQS, JSON.stringify(nextRfqs));
+      } catch { /* ignore */ }
 
       await deleteRfqFromSharePoint(spService, rfq);
+      onMovedToQuote?.(nextQuotes);
     })();
   };
 
