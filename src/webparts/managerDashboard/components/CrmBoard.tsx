@@ -1,5 +1,6 @@
 import * as React from 'react';
 import { runCrmImport } from './crmImport';
+import { exportCompaniesExcel, exportPersonsExcel } from './crmExport';
 import {
   loadCrmDelta, loadCrmPersonsCompanies, saveCrmPersonsCompanies, importCrmPersonsCompanies,
   upsertPersonToSharePoint, upsertCompanyToSharePoint,
@@ -1368,6 +1369,18 @@ const CrmBoard: React.FC<CrmBoardProps> = ({ spService }) => {
               style={{ padding: '7px 14px', borderRadius: 4, border: `1px solid ${C.borderMd}`, background: C.surface, color: C.sub, fontFamily: FF, fontWeight: 700, fontSize: 12, cursor: 'pointer', whiteSpace: 'nowrap' }}
             >
               Import
+            </button>
+            <button
+              onClick={() => {
+                if (tab === 'persons') {
+                  exportPersonsExcel(sortedPersons, companyName, companyAddress);
+                } else {
+                  exportCompaniesExcel(sortedCompanies);
+                }
+              }}
+              style={{ padding: '7px 14px', borderRadius: 4, border: `1px solid ${C.borderMd}`, background: C.surface, color: C.sub, fontFamily: FF, fontWeight: 700, fontSize: 12, cursor: 'pointer', whiteSpace: 'nowrap' }}
+            >
+              Export
             </button>
             {tab === 'persons' ? (
               <button onClick={() => setPersonModal({ person: emptyPerson(), isNew: true, openInView: false })} style={{ padding: '7px 16px', borderRadius: 4, border: 'none', background: C.green, color: '#fff', fontFamily: FF, fontWeight: 700, fontSize: 12, cursor: 'pointer', whiteSpace: 'nowrap' }}>+ Person</button>
