@@ -10,6 +10,9 @@ const LIST_RFI = '3Edge_RFIs';
 const LIST_TASKS = 'WeeklyTasks';
 const LIST_TEAM = 'TeamMembers';
 const LIST_SETTINGS = '3Edge_Settings';
+export const LIST_CHECKLIST = '3Edge_Checklist';
+export const LIST_CHECKLIST_OVERRIDES = '3Edge_Checklist_Overrides';
+export const LIST_CHECKLIST_META = '3Edge_Checklist_Meta';
 /** CRM enquiry rows — one SharePoint item per RFQ / quote / WIP record. */
 export const LIST_CRM_RFQS = '3Edge_CRM_RFQs';
 export const LIST_CRM_QUOTES = '3Edge_CRM_Quotes';
@@ -1542,4 +1545,247 @@ export class SharePointService {
     for (const n of coreBool) await ef(LIST_CRM_WIP, n, 8);
     for (const n of coreNum) await ef(LIST_CRM_WIP, n, 9);
   }
+
+  // ── Checklist lists (crmId + payloadJson — same pattern as CRM RFQs) ───────
+
+  private static checklistItemCrmId(projId: string, itemId: string): string {
+    return `chk|${projId}|${itemId}`;
+  }
+
+  private static checklistMetaCrmId(projId: string): string {
+    return `chkmeta|${projId}`;
+  }
+
+  private static checklistOverrideCrmId(projId: string, ov: ChecklistOverrideLog): string {
+    return `chkov|${projId}|${ov.itemId}|${ov.at}`;
+  }
+
+  private static parseChecklistItemCrmId(crmId: string): { projId: string; itemId: string } | null {
+    const m = crmId.match(/^chk\|(.+)\|(p\d+s\d+i\d+)$/);
+    return m ? { projId: m[1], itemId: m[2] } : null;
+  }
+
+  public async ensureChecklistLists(): Promise<void> {
+    await this.ensureCrmList(LIST_CHECKLIST, '3Edge project checklist item states');
+    await this.ensureCrmList(LIST_CHECKLIST_OVERRIDES, '3Edge checklist PM override audit log');
+    await this.ensureCrmList(LIST_CHECKLIST_META, '3Edge checklist per-project settings');
+    this._listFieldNames.delete(LIST_CHECKLIST);
+    const names = await this.loadListFieldNames(LIST_CHECKLIST);
+    if (!names.has('payloadjson')) {
+      throw new Error(
+        'Checklist list columns could not be created. A site owner must open the Checklist tab once.',
+      );
+    }
+  }
+
+  /** Upsert rows for one project only — does not touch other projects' rows. */
+  private async syncProjectCrmRows(
+    listTitle: string,
+    projectFilter: (crmId: string) => boolean,
+    rows: CrmListRowInput[],
+  ): Promise<void> {
+    const t = SharePointService.oDataStr(listTitle);
+    const existing = await this.loadCrmListRows(listTitle);
+    const projectExisting = existing.filter(e => projectFilter(e.crmId));
+    const byCrmId = new Map(projectExisting.map(e => [e.crmId, e]));
+    const keep = new Set(rows.map(r => r.crmId));
+
+    for (const row of rows) {
+      const body = this.crmListItemBody(row);
+      const prev = byCrmId.get(row.crmId);
+      if (prev?.spId) {
+        await this.spMerge(`/_api/web/lists/getbytitle('${t}')/items(${prev.spId})`, body);
+      } else {
+        await this.spPost(`/_api/web/lists/getbytitle('${t}')/items`, body);
+      }
+    }
+    for (const ex of projectExisting) {
+      if (ex.crmId && !keep.has(ex.crmId)) {
+        await this.spDelete(`/_api/web/lists/getbytitle('${t}')/items(${ex.spId})`);
+      }
+    }
+  }
+
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  private mapLegacyChecklistItemRow(i: any): { itemId: string; state: ChecklistItemState } | null {
+    if (i.payloadJson) {
+      const parsed = this.parseJson<ChecklistItemState>(i.payloadJson, {});
+      const fromCrm = SharePointService.parseChecklistItemCrmId(String(i.crmId || ''));
+      if (fromCrm) return { itemId: fromCrm.itemId, state: parsed };
+    }
+    const c2raw = i.c2 ? String(i.c2) : '';
+    const c2 = c2raw === 'cleared' || c2raw === 'na' || c2raw === 'incorrect' ? c2raw : null;
+    const itemId = String(i.itemId || '');
+    if (!itemId) {
+      const title = String(i.Title || '');
+      const m = title.match(/ · (p\d+s\d+i\d+)$/);
+      if (!m) return null;
+      const state: ChecklistItemState = {};
+      if (i.c1 === true) state.c1 = true;
+      if (c2) state.c2 = c2 as ChecklistC2Action;
+      if (i.c1By) state.c1By = String(i.c1By);
+      if (i.c2By) state.c2By = String(i.c2By);
+      if (i.c1At) state.c1At = String(i.c1At);
+      if (i.c2At) state.c2At = String(i.c2At);
+      if (i.pmOverride === true || i.override === true) state.override = true;
+      if (i.overrideBy) state.overrideBy = String(i.overrideBy);
+      if (i.overrideAt) state.overrideAt = String(i.overrideAt);
+      if (i.overrideReason) state.overrideReason = String(i.overrideReason);
+      return { itemId: m[1], state };
+    }
+    const state: ChecklistItemState = {};
+    if (i.c1 === true) state.c1 = true;
+    if (c2) state.c2 = c2 as ChecklistC2Action;
+    if (i.c1By) state.c1By = String(i.c1By);
+    if (i.c2By) state.c2By = String(i.c2By);
+    if (i.c1At) state.c1At = String(i.c1At);
+    if (i.c2At) state.c2At = String(i.c2At);
+    if (i.pmOverride === true || i.override === true) state.override = true;
+    if (i.overrideBy) state.overrideBy = String(i.overrideBy);
+    if (i.overrideAt) state.overrideAt = String(i.overrideAt);
+    if (i.overrideReason) state.overrideReason = String(i.overrideReason);
+    return { itemId, state };
+  }
+
+  public async loadChecklist(projId: string): Promise<ChecklistPersisted | null> {
+    await this.ensureChecklistLists();
+    const itemPrefix = `chk|${projId}|`;
+    const ovPrefix = `chkov|${projId}|`;
+    const metaCrmId = SharePointService.checklistMetaCrmId(projId);
+
+    const [itemRows, ovRows, metaRows] = await Promise.all([
+      this.loadCrmListRows(LIST_CHECKLIST),
+      this.loadCrmListRows(LIST_CHECKLIST_OVERRIDES),
+      this.loadCrmListRows(LIST_CHECKLIST_META),
+    ]);
+
+    const items: Record<string, ChecklistItemState> = {};
+    for (const row of itemRows) {
+      if (!row.crmId.startsWith(itemPrefix)) continue;
+      const ids = SharePointService.parseChecklistItemCrmId(row.crmId);
+      if (!ids) continue;
+      items[ids.itemId] = this.parseJson<ChecklistItemState>(row.payloadJson, {});
+    }
+
+    // Legacy rows saved with Title only (no crmId / payloadJson columns)
+    try {
+      const t = SharePointService.oDataStr(LIST_CHECKLIST);
+      const d = await this.spGet(`/_api/web/lists/getbytitle('${t}')/items?$top=5000`);
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      for (const i of (d.value || []) as any[]) {
+        const title = String(i.Title || '');
+        if (!title.startsWith(`${projId} · `)) continue;
+        const legacy = this.mapLegacyChecklistItemRow(i);
+        if (legacy && !items[legacy.itemId]) items[legacy.itemId] = legacy.state;
+      }
+    } catch { /* ignore */ }
+
+    const overrides: ChecklistOverrideLog[] = [];
+    for (const row of ovRows) {
+      if (row.crmId.startsWith(ovPrefix)) {
+        overrides.push(this.parseJson<ChecklistOverrideLog>(row.payloadJson, {
+          itemId: '', by: '', at: '', reason: '', itemText: '', taskCode: '', action: 'cleared',
+        }));
+      }
+    }
+
+    let projectType: 'steel' | 'concrete' | 'both' = 'steel';
+    let updatedAt = 0;
+    const metaRow = metaRows.find(r => r.crmId === metaCrmId);
+    if (metaRow?.payloadJson) {
+      const meta = this.parseJson<{ projectType?: string; updatedAt?: number }>(metaRow.payloadJson, {});
+      if (meta.projectType === 'concrete' || meta.projectType === 'both') projectType = meta.projectType;
+      updatedAt = typeof meta.updatedAt === 'number' ? meta.updatedAt : 0;
+    } else {
+      // Legacy meta row with Title = projId only
+      try {
+        const t = SharePointService.oDataStr(LIST_CHECKLIST_META);
+        const d = await this.spGet(`/_api/web/lists/getbytitle('${t}')/items?$top=500`);
+        const legacyMeta = (d.value || []).find((i: { Title?: string }) => String(i.Title || '') === projId);
+        if (legacyMeta) {
+          const lm = legacyMeta as { projectType?: string; updatedAt?: number };
+          if (lm.projectType === 'concrete' || lm.projectType === 'both') projectType = lm.projectType;
+          updatedAt = Number(lm.updatedAt) || 0;
+        }
+      } catch { /* ignore */ }
+    }
+
+    if (Object.keys(items).length === 0 && overrides.length === 0 && !metaRow && updatedAt === 0) {
+      return null;
+    }
+
+    return { items, overrides, projectType, updatedAt };
+  }
+
+  public async saveChecklist(projId: string, data: ChecklistPersisted): Promise<void> {
+    await this.ensureChecklistLists();
+    const updatedAt = data.updatedAt || Date.now();
+
+    const itemRows: CrmListRowInput[] = Object.entries(data.items || {}).map(([itemId, st]) => ({
+      crmId: SharePointService.checklistItemCrmId(projId, itemId),
+      title: `${projId} · ${itemId}`,
+      recordNum: itemId,
+      payloadJson: JSON.stringify(st),
+    }));
+    await this.syncProjectCrmRows(
+      LIST_CHECKLIST,
+      crmId => crmId.startsWith(`chk|${projId}|`),
+      itemRows,
+    );
+
+    const ovRows: CrmListRowInput[] = (data.overrides || []).map((ov, idx) => ({
+      crmId: SharePointService.checklistOverrideCrmId(projId, ov),
+      title: `${projId} · ${ov.itemId} · ${ov.at}`,
+      recordNum: String(idx),
+      payloadJson: JSON.stringify(ov),
+    }));
+    await this.syncProjectCrmRows(
+      LIST_CHECKLIST_OVERRIDES,
+      crmId => crmId.startsWith(`chkov|${projId}|`),
+      ovRows,
+    );
+
+    await this.syncProjectCrmRows(
+      LIST_CHECKLIST_META,
+      crmId => crmId === SharePointService.checklistMetaCrmId(projId) || crmId === projId,
+      [{
+        crmId: SharePointService.checklistMetaCrmId(projId),
+        title: projId,
+        recordNum: projId,
+        payloadJson: JSON.stringify({ projectType: data.projectType || 'steel', updatedAt }),
+      }],
+    );
+  }
+}
+
+export type ChecklistC2Action = 'cleared' | 'na' | 'incorrect';
+
+export interface ChecklistItemState {
+  c1?: boolean;
+  c2?: ChecklistC2Action | null;
+  c1By?: string;
+  c2By?: string;
+  c1At?: string;
+  c2At?: string;
+  override?: boolean;
+  overrideBy?: string;
+  overrideAt?: string;
+  overrideReason?: string;
+}
+
+export interface ChecklistOverrideLog {
+  itemId: string;
+  by: string;
+  at: string;
+  reason: string;
+  itemText: string;
+  taskCode: string;
+  action: ChecklistC2Action;
+}
+
+export interface ChecklistPersisted {
+  items: Record<string, ChecklistItemState>;
+  overrides: ChecklistOverrideLog[];
+  projectType: 'steel' | 'concrete' | 'both';
+  updatedAt?: number;
 }
