@@ -1,7 +1,7 @@
 import * as React from 'react';
 import { IProject } from '../../../shared/models/IProject';
 import type { SharePointService } from '../../../shared/services/SharePointService';
-import { checklistLocalKey, loadChecklistJson, saveChecklistJson } from './checklistStorage';
+import { checklistLocalKey, loadChecklistData, loadChecklistUiPrefs, migrateAllChecklistsFromSettings, saveChecklistData, saveChecklistUiPrefs } from './checklistStorage';
 
 // ───────────────────────────── Types ─────────────────────────────
 type SectionType = 'steel' | 'concrete' | 'both';
@@ -455,15 +455,30 @@ const ChecklistBoard: React.FC<ChecklistBoardProps> = ({ projects, userDisplayNa
 
   const touchLocalEdit = (): void => { lastLocalEditAtRef.current = Date.now(); };
 
+  // One-time import: move checklist_v1_* JSON rows from 3Edge_Settings into the three checklist lists.
+  const settingsMigratedRef = React.useRef(false);
+  React.useEffect(() => {
+    if (settingsMigratedRef.current) return;
+    settingsMigratedRef.current = true;
+    void (async () => {
+      try {
+        const count = await migrateAllChecklistsFromSettings(spService);
+        if (count > 0) toast(`Imported ${count} checklist(s) from 3Edge_Settings into SharePoint lists.`);
+      } catch { /* provisioning may need a site owner */ }
+    })();
+  }, [spService, toast]);
+
   // Override modal state
   const [ovModal, setOvModal] = React.useState<{ id: string | null; action: C2Action; reason: string }>({ id: null, action: 'cleared', reason: '' });
 
-  const applyPersisted = (d: IPersisted): void => {
+  const applyPersisted = (d: IPersisted, ui?: { role?: Role; currentPhase?: string }): void => {
     setItems(d.items || {});
     setOverrides(d.overrides || []);
     setProjectType(d.projectType || 'steel');
-    setCurrentPhase(d.currentPhase || '01');
-    if (d.role) setRole(d.role);
+    if (ui?.currentPhase) setCurrentPhase(ui.currentPhase);
+    else if (d.currentPhase) setCurrentPhase(d.currentPhase);
+    if (ui?.role) setRole(ui.role);
+    else if (d.role) setRole(d.role);
   };
 
   const resetForNewProject = (projId: string): void => {
@@ -478,14 +493,20 @@ const ChecklistBoard: React.FC<ChecklistBoardProps> = ({ projects, userDisplayNa
     if (skipIfRecentSave && Date.now() - lastSaveAtRef.current < 4000) return;
     if (Date.now() - lastLocalEditAtRef.current < 15000) return;
     try {
-      const raw = await loadChecklistJson(spService, projId);
-      if (!raw) return;
-      const d = JSON.parse(raw) as IPersisted;
+      const d = await loadChecklistData(spService, projId);
+      if (!d) return;
       const local = stateRef.current;
       if ((d.updatedAt || 0) < (local.updatedAt || 0)) return;
-      const remoteStr = JSON.stringify(d);
-      const localStr = JSON.stringify(local);
-      if (remoteStr !== localStr) applyPersisted(d);
+      const remoteShared = { items: d.items, overrides: d.overrides, projectType: d.projectType, updatedAt: d.updatedAt };
+      const localShared = {
+        items: local.items,
+        overrides: local.overrides,
+        projectType: local.projectType,
+        updatedAt: local.updatedAt,
+      };
+      if (JSON.stringify(remoteShared) !== JSON.stringify(localShared)) {
+        applyPersisted({ ...local, ...d }, loadChecklistUiPrefs(projId));
+      }
     } catch { /* ignore poll errors */ }
   }, [spService]);
 
@@ -505,20 +526,27 @@ const ChecklistBoard: React.FC<ChecklistBoardProps> = ({ projects, userDisplayNa
     setSyncState('loading');
     void (async () => {
       try {
-        const raw = await loadChecklistJson(spService, selProjId);
+        await spService.ensureChecklistLists();
+        const d = await loadChecklistData(spService, selProjId);
         if (cancelled) return;
-        if (raw) {
-          applyPersisted(JSON.parse(raw) as IPersisted);
+        const ui = loadChecklistUiPrefs(selProjId);
+        if (d) {
+          applyPersisted(
+            { items: d.items, overrides: d.overrides, projectType: d.projectType, updatedAt: d.updatedAt, role, currentPhase },
+            ui,
+          );
           setSpSyncNote('');
         } else {
           resetForNewProject(selProjId);
+          if (ui.currentPhase) setCurrentPhase(ui.currentPhase);
+          if (ui.role) setRole(ui.role);
         }
       } catch {
         if (cancelled) return;
         try {
           const raw = localStorage.getItem(checklistLocalKey(selProjId));
           if (raw) {
-            applyPersisted(JSON.parse(raw) as IPersisted);
+            applyPersisted(JSON.parse(raw) as IPersisted, loadChecklistUiPrefs(selProjId));
             setSpSyncNote('Using checklist saved on this device only.');
           } else {
             resetForNewProject(selProjId);
@@ -546,20 +574,19 @@ const ChecklistBoard: React.FC<ChecklistBoardProps> = ({ projects, userDisplayNa
   const flushSave = React.useCallback(async (): Promise<void> => {
     if (!selProjId) return;
     const updatedAt = Date.now();
-    const payload: IPersisted = {
+    const shared = {
       items: stateRef.current.items,
       overrides: stateRef.current.overrides,
       projectType: stateRef.current.projectType,
-      role: stateRef.current.role,
-      currentPhase: stateRef.current.currentPhase,
       updatedAt,
     };
-    stateRef.current = payload;
+    stateRef.current = { ...stateRef.current, updatedAt };
+    saveChecklistUiPrefs(selProjId, { role: stateRef.current.role, currentPhase: stateRef.current.currentPhase });
     setSyncState('saving');
-    const synced = await saveChecklistJson(spService, selProjId, JSON.stringify(payload));
+    const synced = await saveChecklistData(spService, selProjId, shared);
     lastSaveAtRef.current = Date.now();
     setSyncState('idle');
-    setSpSyncNote(synced ? '' : 'Saved on this device. SharePoint sync failed — ensure users can edit the 3Edge_Settings list.');
+    setSpSyncNote(synced ? '' : 'Saved on this device. SharePoint sync failed — ensure you can edit the 3Edge_Checklist list (Contribute or higher).');
   }, [selProjId, spService]);
 
   // Persist to SharePoint when state changes
