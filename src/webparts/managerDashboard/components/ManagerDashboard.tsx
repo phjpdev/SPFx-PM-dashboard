@@ -16,8 +16,7 @@ import CrmBoard from './CrmBoard';
 
 // ── Assets ────────────────────────────────────────────────────────────────────
 import logoImg from '../assets/3edge-logo.png';
-import pdfBgImg from '../assets/pdf-backgroundimage.png';
-const IMG_LOGO_DASH: string = logoImg;
+import { drawLetterhead, drawPdfBg } from '../../../shared/utils/pdfLetterhead';
 
 // ── Montserrat local fonts ─────────────────────────────────────────────────────
 import _fExtraLight from '../assets/Montserrat-ExtraLight.ttf';
@@ -27,6 +26,7 @@ import _fExtraBold from '../assets/Montserrat-ExtraBold.ttf';
 import _fExtraBoldI from '../assets/Montserrat-ExtraBoldItalic.ttf';
 import _fBlack from '../assets/Montserrat-Black.ttf';
 import _fBlackI from '../assets/Montserrat-BlackItalic.ttf';
+const IMG_LOGO_DASH: string = logoImg;
 
 (function injectMontserrat(): void {
   const id = '3edge-montserrat';
@@ -89,31 +89,6 @@ const inp: React.CSSProperties = {
   background: 'var(--s2)', color: 'var(--t1)', width: '100%', outline: 'none'
 };
 const selStyle: React.CSSProperties = { ...inp, cursor: 'pointer' };
-
-// ── Shared Letterhead for all PDFs (uses actual letterhead images) ────────────
-// eslint-disable-next-line @typescript-eslint/no-explicit-any
-function drawPdfBg(doc: any, pw: number, ph: number): void {
-  doc.addImage(pdfBgImg, 'PNG', 0, 0, pw, ph);
-}
-
-// eslint-disable-next-line @typescript-eslint/no-explicit-any
-function drawLetterhead(doc: any, pw: number, ph: number, title: string, subtitle: string): number {
-  drawPdfBg(doc, pw, ph);
-  // Title bar below header area
-  const barY = 40;
-  const barH = 12;
-  doc.setFillColor(26, 32, 48);
-  doc.rect(0, barY, pw, barH, 'F');
-  doc.setFillColor(42, 158, 42);
-  doc.rect(0, barY, 3, barH, 'F');
-  doc.setFontSize(11); doc.setFont('helvetica', 'bold'); doc.setTextColor(255, 255, 255);
-  doc.text(title, 8, barY + 7.5);
-  if (subtitle) {
-    doc.setFontSize(8); doc.setFont('helvetica', 'normal'); doc.setTextColor(160, 175, 195);
-    doc.text(subtitle, pw - 8, barY + 7.5, { align: 'right' });
-  }
-  return barY + barH + 4;
-}
 
 // ── PDF Generator ─────────────────────────────────────────────────────────────
 function generateRfiPdf(rfi: IRfi, proj: IProject | undefined): Blob | undefined {
