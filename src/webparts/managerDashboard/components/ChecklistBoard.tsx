@@ -197,8 +197,15 @@ const ChecklistBoard: React.FC<ChecklistBoardProps> = ({ projects, userDisplayNa
     const synced = await saveChecklistData(spService, selProjId, shared);
     lastSaveAtRef.current = Date.now();
     setSyncState('idle');
-    setSpSyncNote(synced ? '' : 'Saved on this device. SharePoint sync failed — ensure you can edit the 3Edge_Checklist list (Contribute or higher).');
-  }, [selProjId, spService]);
+    if (synced === false) {
+      setSpSyncNote('Saved on this device only — SharePoint sync failed. Check you can edit 3Edge_Settings and 3Edge_Checklist.');
+      toast('Checklist could not sync to SharePoint — saved on this device only.');
+    } else if (synced === 'settings') {
+      setSpSyncNote(`Synced to 3Edge_Settings as checklist_v1_${selProjId.replace(/[^a-zA-Z0-9_-]/g, '_')} (checklist list columns not provisioned yet).`);
+    } else {
+      setSpSyncNote('');
+    }
+  }, [selProjId, spService, toast]);
 
   // Persist to SharePoint when state changes
   React.useEffect(() => {
@@ -209,6 +216,23 @@ const ChecklistBoard: React.FC<ChecklistBoardProps> = ({ projects, userDisplayNa
       if (saveTimerRef.current) clearTimeout(saveTimerRef.current);
     };
   }, [selProjId, items, overrides, projectType, role, currentPhase, checklistReady, flushSave]);
+
+  // Flush pending save when user switches tab or closes the page
+  React.useEffect(() => {
+    if (!selProjId || !checklistReady) return;
+    const onVis = (): void => {
+      if (document.visibilityState === 'hidden') {
+        if (saveTimerRef.current) clearTimeout(saveTimerRef.current);
+        void flushSave();
+      }
+    };
+    window.addEventListener('beforeunload', onVis);
+    document.addEventListener('visibilitychange', onVis);
+    return () => {
+      window.removeEventListener('beforeunload', onVis);
+      document.removeEventListener('visibilitychange', onVis);
+    };
+  }, [selProjId, checklistReady, flushSave]);
 
   // Poll SharePoint so other users' checkmarks appear (every 12s)
   React.useEffect(() => {
