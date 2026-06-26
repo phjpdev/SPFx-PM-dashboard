@@ -174,19 +174,18 @@ export async function loadChecklistData(
   return fromSp;
 }
 
-/** Saves shared checklist state to SharePoint lists; UI prefs stay on this device only. */
+/** Saves shared checklist state to SharePoint; UI prefs stay on this device only. */
 export async function saveChecklistData(
   sp: SharePointService,
   projId: string,
   data: ChecklistPersisted,
-): Promise<boolean> {
+): Promise<'list' | 'settings' | false> {
   try {
     localStorage.setItem(checklistLocalKey(projId), JSON.stringify(data));
   } catch { /* ignore quota */ }
 
   try {
-    await sp.saveChecklist(projId, data);
-    return true;
+    return await sp.saveChecklist(projId, data);
   } catch {
     return false;
   }

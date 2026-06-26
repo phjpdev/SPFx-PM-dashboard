@@ -1552,8 +1552,49 @@ export class SharePointService {
     return `chk|${projId}|${itemId}`;
   }
 
+  private static checklistSettingsKey(projId: string): string {
+    return `checklist_v1_${projId.replace(/[^a-zA-Z0-9_-]/g, '_')}`;
+  }
+
   private static checklistMetaCrmId(projId: string): string {
     return `chkmeta|${projId}`;
+  }
+
+  /** True when checklist lists have crmId + payloadJson columns (site owner provisioned). */
+  private async checklistListColumnsReady(): Promise<boolean> {
+    this._listFieldNames.delete(LIST_CHECKLIST);
+    const names = await this.loadListFieldNames(LIST_CHECKLIST);
+    return names.has('payloadjson') && names.has('crmid');
+  }
+
+  private parseChecklistPersisted(raw: string | null): ChecklistPersisted | null {
+    if (!raw) return null;
+    try {
+      const d = JSON.parse(raw) as ChecklistPersisted;
+      return {
+        items: d.items || {},
+        overrides: d.overrides || [],
+        projectType: d.projectType === 'concrete' || d.projectType === 'both' ? d.projectType : 'steel',
+        updatedAt: typeof d.updatedAt === 'number' ? d.updatedAt : 0,
+      };
+    } catch {
+      return null;
+    }
+  }
+
+  private async loadChecklistFromSettings(projId: string): Promise<ChecklistPersisted | null> {
+    const raw = await this.getSettingChunks(SharePointService.checklistSettingsKey(projId));
+    return this.parseChecklistPersisted(raw);
+  }
+
+  private async saveChecklistToSettings(projId: string, data: ChecklistPersisted): Promise<void> {
+    const payload: ChecklistPersisted = {
+      items: data.items || {},
+      overrides: data.overrides || [],
+      projectType: data.projectType || 'steel',
+      updatedAt: data.updatedAt || Date.now(),
+    };
+    await this.setSettingChunks(SharePointService.checklistSettingsKey(projId), JSON.stringify(payload));
   }
 
   private static checklistOverrideCrmId(projId: string, ov: ChecklistOverrideLog): string {
@@ -1565,17 +1606,12 @@ export class SharePointService {
     return m ? { projId: m[1], itemId: m[2] } : null;
   }
 
-  public async ensureChecklistLists(): Promise<void> {
+  /** Ensures checklist lists exist; returns whether list columns are ready for row sync. */
+  public async ensureChecklistLists(): Promise<boolean> {
     await this.ensureCrmList(LIST_CHECKLIST, '3Edge project checklist item states');
     await this.ensureCrmList(LIST_CHECKLIST_OVERRIDES, '3Edge checklist PM override audit log');
     await this.ensureCrmList(LIST_CHECKLIST_META, '3Edge checklist per-project settings');
-    this._listFieldNames.delete(LIST_CHECKLIST);
-    const names = await this.loadListFieldNames(LIST_CHECKLIST);
-    if (!names.has('payloadjson')) {
-      throw new Error(
-        'Checklist list columns could not be created. A site owner must open the Checklist tab once.',
-      );
-    }
+    return this.checklistListColumnsReady();
   }
 
   /** Upsert rows for one project only — does not touch other projects' rows. */
@@ -1618,7 +1654,7 @@ export class SharePointService {
     const itemId = String(i.itemId || '');
     if (!itemId) {
       const title = String(i.Title || '');
-      const m = title.match(/ · (p\d+s\d+i\d+)$/);
+      const m = title.match(/(?: · | - )(p\d+s\d+i\d+)$/);
       if (!m) return null;
       const state: ChecklistItemState = {};
       if (i.c1 === true) state.c1 = true;
@@ -1647,8 +1683,7 @@ export class SharePointService {
     return { itemId, state };
   }
 
-  public async loadChecklist(projId: string): Promise<ChecklistPersisted | null> {
-    await this.ensureChecklistLists();
+  private async loadChecklistFromLists(projId: string): Promise<ChecklistPersisted | null> {
     const itemPrefix = `chk|${projId}|`;
     const ovPrefix = `chkov|${projId}|`;
     const metaCrmId = SharePointService.checklistMetaCrmId(projId);
@@ -1674,7 +1709,7 @@ export class SharePointService {
       // eslint-disable-next-line @typescript-eslint/no-explicit-any
       for (const i of (d.value || []) as any[]) {
         const title = String(i.Title || '');
-        if (!title.startsWith(`${projId} · `)) continue;
+        if (!title.startsWith(`${projId} · `) && !title.startsWith(`${projId} - `)) continue;
         const legacy = this.mapLegacyChecklistItemRow(i);
         if (legacy && !items[legacy.itemId]) items[legacy.itemId] = legacy.state;
       }
@@ -1697,7 +1732,6 @@ export class SharePointService {
       if (meta.projectType === 'concrete' || meta.projectType === 'both') projectType = meta.projectType;
       updatedAt = typeof meta.updatedAt === 'number' ? meta.updatedAt : 0;
     } else {
-      // Legacy meta row with Title = projId only
       try {
         const t = SharePointService.oDataStr(LIST_CHECKLIST_META);
         const d = await this.spGet(`/_api/web/lists/getbytitle('${t}')/items?$top=500`);
@@ -1717,8 +1751,28 @@ export class SharePointService {
     return { items, overrides, projectType, updatedAt };
   }
 
-  public async saveChecklist(projId: string, data: ChecklistPersisted): Promise<void> {
-    await this.ensureChecklistLists();
+  public async loadChecklist(projId: string): Promise<ChecklistPersisted | null> {
+    const columnsReady = await this.ensureChecklistLists();
+
+    let fromLists: ChecklistPersisted | null = null;
+    if (columnsReady) {
+      try {
+        fromLists = await this.loadChecklistFromLists(projId);
+      } catch { /* fall through to settings */ }
+    }
+
+    let fromSettings: ChecklistPersisted | null = null;
+    try {
+      fromSettings = await this.loadChecklistFromSettings(projId);
+    } catch { /* ignore */ }
+
+    if (fromLists && fromSettings) {
+      return (fromSettings.updatedAt || 0) >= (fromLists.updatedAt || 0) ? fromSettings : fromLists;
+    }
+    return fromLists || fromSettings;
+  }
+
+  private async saveChecklistToLists(projId: string, data: ChecklistPersisted): Promise<void> {
     const updatedAt = data.updatedAt || Date.now();
 
     const itemRows: CrmListRowInput[] = Object.entries(data.items || {}).map(([itemId, st]) => ({
@@ -1755,6 +1809,20 @@ export class SharePointService {
         payloadJson: JSON.stringify({ projectType: data.projectType || 'steel', updatedAt }),
       }],
     );
+  }
+
+  public async saveChecklist(projId: string, data: ChecklistPersisted): Promise<'list' | 'settings'> {
+    const columnsReady = await this.ensureChecklistLists();
+    if (columnsReady) {
+      try {
+        await this.saveChecklistToLists(projId, data);
+        return 'list';
+      } catch {
+        /* list sync failed — fall back to 3Edge_Settings */
+      }
+    }
+    await this.saveChecklistToSettings(projId, data);
+    return 'settings';
   }
 }
 
