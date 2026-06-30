@@ -305,7 +305,6 @@ const LinkProjectModal: React.FC<{
 
   const q = search.toLowerCase().trim();
   const options = projects.filter(p => {
-    if (linkedProjNums.has(p.projNum)) return false;
     if (!q) return true;
     return (
       p.projNum.toLowerCase().includes(q) ||
@@ -344,13 +343,13 @@ const LinkProjectModal: React.FC<{
                 <option value="">— Select project —</option>
                 {options.map(p => (
                   <option key={p.projNum} value={p.projNum}>
-                    {p.projNum} — {p.name}{p.company ? ` (${p.company})` : ''}{p.quoteNum ? ` · ${p.quoteNum}` : ''}
+                    {p.projNum} — {p.name}{p.company ? ` (${p.company})` : ''}{p.quoteNum ? ` · ${p.quoteNum}` : ''}{linkedProjNums.has(p.projNum) ? ' · already in CRM' : ''}
                   </option>
                 ))}
               </select>
               {options.length === 0 && !loading && (
                 <p style={{ fontFamily: FF, fontSize: 11, color: C.muted, marginTop: 8 }}>
-                  No available projects — all may already be linked in CRM WIP.
+                  No projects match your search.
                 </p>
               )}
             </>
