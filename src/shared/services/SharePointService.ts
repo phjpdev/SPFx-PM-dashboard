@@ -174,7 +174,7 @@ export class SharePointService {
   // ── Project CRUD ──────────────────────────────────────────
 
   public async loadProjects(): Promise<IProject[]> {
-    const d = await this.spGet(`/_api/web/lists/getbytitle('${LIST_PROJ}')/items?$top=500&$orderby=projNum asc`);
+    const d = await this.spGet(`/_api/web/lists/getbytitle('${LIST_PROJ}')/items?$top=5000&$orderby=projNum asc`);
     return (d.value || []).map((i: any) => ({ // eslint-disable-line @typescript-eslint/no-explicit-any
       id: i.projNum || String(i.Id),
       spId: i.Id,
