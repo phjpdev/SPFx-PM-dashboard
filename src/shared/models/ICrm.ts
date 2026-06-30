@@ -15,7 +15,10 @@ export interface CrmActivity {
 export interface CrmAttachment {
   id: string;
   name: string;
+  /** Base64 data URL for pending uploads; empty when stored on SharePoint. */
   dataUrl: string;
+  /** SharePoint server-relative URL after upload to list attachments. */
+  spUrl?: string;
 }
 
 export interface CrmPerson {

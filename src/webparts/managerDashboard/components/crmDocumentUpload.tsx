@@ -6,6 +6,11 @@ const FF = 'Montserrat,sans-serif';
 
 const isImageName = (name: string): boolean => /\.(png|jpe?g|gif|webp|bmp|svg)$/i.test(name);
 
+const attachmentHref = (att: CrmAttachment): string => att.spUrl || att.dataUrl;
+
+const attachmentIsImage = (att: CrmAttachment): boolean =>
+  isImageName(att.name) || att.dataUrl.startsWith('data:image');
+
 const ml: React.CSSProperties = {
   fontSize: 10, fontWeight: 700, color: '#4a5568', letterSpacing: '.07em',
   textTransform: 'uppercase', marginBottom: 4, display: 'block', fontFamily: FF,
@@ -59,7 +64,8 @@ export const DocumentUploadSection: React.FC<{
       {attachments.length > 0 && (
         <div style={{ marginTop: 10, display: 'flex', flexWrap: 'wrap', gap: 10 }}>
           {attachments.map(att => {
-            const isImg = att.dataUrl.startsWith('data:image') || isImageName(att.name);
+            const href = attachmentHref(att);
+            const isImg = attachmentIsImage(att);
             return (
               <div
                 key={att.id}
@@ -69,11 +75,13 @@ export const DocumentUploadSection: React.FC<{
                 }}
               >
                 {isImg ? (
-                  <img src={att.dataUrl} alt={att.name} style={{ width: 88, height: 88, objectFit: 'cover', borderRadius: 2, display: 'block' }} />
+                  <img src={href} alt={att.name} style={{ width: 88, height: 88, objectFit: 'cover', borderRadius: 2, display: 'block' }} />
                 ) : (
                   <a
-                    href={att.dataUrl}
-                    download={att.name}
+                    href={href}
+                    download={att.spUrl ? undefined : att.name}
+                    target={att.spUrl ? '_blank' : undefined}
+                    rel={att.spUrl ? 'noopener noreferrer' : undefined}
                     style={{ display: 'block', padding: '6px 10px', fontSize: 11.5, color: '#2a9e2a', fontFamily: FF, textDecoration: 'none' }}
                   >
                     {att.name}
