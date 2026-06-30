@@ -1,6 +1,8 @@
 import type { SharePointService } from '../../../shared/services/SharePointService';
-import type { CrmPerson, CrmCompany, CrmRfq, CrmQuote, CrmProject } from './crmTypes';
+import { LIST_CRM_QUOTES } from '../../../shared/services/SharePointService';
+import type { CrmPerson, CrmCompany, CrmRfq, CrmQuote, CrmProject, CrmAttachment } from './crmTypes';
 import { normalizeCrmQuote, normalizeCrmRfq } from './crmRfqNormalize';
+import { getAllQuoteAttachmentIds, setQuoteAttachments } from './crmAttachmentStore';
 
 export interface CrmQuoteBudget {
   year: number;
@@ -445,6 +447,81 @@ export async function deleteQuoteFromSharePoint(sp: SharePointService, quote: Pi
   if (quote.id) {
     try { await sp.deleteAllCrmQuotesByCrmId(quote.id); } catch { /* ignore */ }
   }
+}
+
+const isPendingAttachment = (a: CrmAttachment): boolean =>
+  !!a.dataUrl && (a.dataUrl.startsWith('data:') || a.dataUrl.startsWith('blob:'));
+
+export const spFileToCrmAttachment = (f: { FileName: string; ServerRelativeUrl: string }): CrmAttachment => ({
+  id: `sp-${f.FileName}`,
+  name: f.FileName,
+  dataUrl: '',
+  spUrl: f.ServerRelativeUrl,
+});
+
+/** Load quote documents from SharePoint list attachments (shared across users). */
+export async function loadQuoteAttachmentsFromSharePoint(
+  sp: SharePointService,
+  quote: Pick<CrmQuote, 'id' | 'spId'>,
+): Promise<CrmAttachment[] | null> {
+  if (!quote.spId) return null;
+  try {
+    const files = await sp.getAttachments(quote.spId, LIST_CRM_QUOTES);
+    return files.map(spFileToCrmAttachment);
+  } catch {
+    return null;
+  }
+}
+
+/** Upload new / remove deleted attachments on the quote's SharePoint list item. */
+export async function syncQuoteAttachmentsToSharePoint(
+  sp: SharePointService,
+  quote: Pick<CrmQuote, 'id' | 'spId'>,
+  next: CrmAttachment[],
+  prev: CrmAttachment[],
+): Promise<CrmAttachment[]> {
+  if (!quote.spId) return next;
+
+  const prevNames = new Set(prev.filter(a => a.spUrl || !isPendingAttachment(a)).map(a => a.name));
+  const nextNames = new Set(next.map(a => a.name));
+  for (const name of Array.from(prevNames)) {
+    if (!nextNames.has(name)) {
+      try { await sp.deleteAttachment(quote.spId, name, LIST_CRM_QUOTES); } catch { /* ignore */ }
+    }
+  }
+
+  for (const att of next) {
+    if (att.spUrl || !isPendingAttachment(att)) continue;
+    try {
+      const blob = await fetch(att.dataUrl).then(r => r.blob());
+      const file = new File([blob], att.name, { type: blob.type || 'application/octet-stream' });
+      await sp.uploadAttachment(quote.spId, file, LIST_CRM_QUOTES);
+    } catch { /* ignore single file */ }
+  }
+
+  const synced = (await loadQuoteAttachmentsFromSharePoint(sp, quote)) ?? [];
+  setQuoteAttachments(quote.id, synced);
+  return synced;
+}
+
+/** Quote ids that have at least one attachment (SharePoint + local-only quotes). */
+export async function loadQuoteAttachmentIndex(
+  sp: SharePointService,
+  quotes: CrmQuote[],
+): Promise<Set<string>> {
+  const ids = new Set(getAllQuoteAttachmentIds());
+  const withSp = quotes.filter(q => q.spId);
+  const BATCH = 5;
+  for (let i = 0; i < withSp.length; i += BATCH) {
+    await Promise.all(withSp.slice(i, i + BATCH).map(async q => {
+      try {
+        const files = await sp.getAttachments(q.spId!, LIST_CRM_QUOTES);
+        if (files.length) ids.add(q.id);
+        else ids.delete(q.id);
+      } catch { /* ignore */ }
+    }));
+  }
+  return ids;
 }
 
 export async function upsertWipToSharePoint(sp: SharePointService, project: CrmProject): Promise<CrmProject> {

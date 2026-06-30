@@ -1,11 +1,12 @@
 import * as React from 'react';
-import { getQuoteAttachments, getAllQuoteAttachmentIds, setQuoteAttachments } from './crmAttachmentStore';
+import { getQuoteAttachments, setQuoteAttachments } from './crmAttachmentStore';
 import { DocumentUploadSection } from './crmDocumentUpload';
 import {
   loadProjectsFromSharePoint, loadQuoteBudget, loadQuotesFromSharePoint, loadQuotesRemote,
   loadQuotesLocal, mergeQuotesWithLocal,
   saveQuoteBudget,
   upsertQuoteToSharePoint, deleteQuoteFromSharePoint, upsertWipToSharePoint,
+  loadQuoteAttachmentsFromSharePoint, syncQuoteAttachmentsToSharePoint, loadQuoteAttachmentIndex,
   getMonthBudgetTarget, getQuoteBudgetForYear, normalizeQuoteBudget, normalizeQuoteBudgetStore,
   setQuoteBudgetForYear, MONTH_LABELS,
   type CrmQuoteBudget, type CrmQuoteBudgetStore,
@@ -372,16 +373,32 @@ const LinkProjectModal: React.FC<{
 
 const QuoteModal: React.FC<{
   initial: CrmQuote;
+  spService: SharePointService;
   persons: CrmPerson[];
   companies: CrmCompany[];
-  onSave: (q: CrmQuote) => void;
+  onSave: (q: CrmQuote, attachments: CrmAttachment[], prevAttachments: CrmAttachment[]) => void | Promise<void>;
   onClose: () => void;
-}> = ({ initial, persons, companies, onSave, onClose }) => {
+}> = ({ initial, spService, persons, companies, onSave, onClose }) => {
   const [d, setD] = React.useState<CrmQuote>(() => ({ ...initial, quoteNum: ensureQuPrefix(initial.quoteNum) }));
   const [attachments, setAttachments] = React.useState<CrmAttachment[]>(() => getQuoteAttachments(initial.id));
   const [awaitingLostReason, setAwaitingLostReason] = React.useState<CrmQuote | null>(null);
+  const initialAttachmentsRef = React.useRef<CrmAttachment[]>(getQuoteAttachments(initial.id));
   const set = <K extends keyof CrmQuote>(k: K, v: CrmQuote[K]): void => setD(p => ({ ...p, [k]: v }));
   const grid2: React.CSSProperties = { display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '14px 18px' };
+
+  React.useEffect(() => {
+    let cancelled = false;
+    void (async () => {
+      const remote = await loadQuoteAttachmentsFromSharePoint(spService, initial);
+      if (cancelled) return;
+      if (remote !== null) {
+        setAttachments(remote);
+        setQuoteAttachments(initial.id, remote);
+        initialAttachmentsRef.current = remote;
+      }
+    })();
+    return () => { cancelled = true; };
+  }, [spService, initial.id, initial.spId]);
 
   const sortedCompanies = React.useMemo(
     () => [...companies].sort((a, b) => a.name.localeCompare(b.name, 'en', { sensitivity: 'base' })),
@@ -596,7 +613,7 @@ const QuoteModal: React.FC<{
                   return;
                 }
                 setQuoteAttachments(d.id, attachments);
-                onSave(prepared);
+                void onSave(prepared, attachments, initialAttachmentsRef.current);
               }
             }}
             style={{ padding: '8px 20px', borderRadius: 4, border: 'none', background: canSave ? C.green : C.borderMd, color: '#fff', fontFamily: FF, fontWeight: 700, fontSize: 12, cursor: canSave ? 'pointer' : 'default' }}
@@ -611,7 +628,7 @@ const QuoteModal: React.FC<{
           onConfirm={reason => {
             setAwaitingLostReason(null);
             setQuoteAttachments(awaitingLostReason.id, attachments);
-            onSave({ ...awaitingLostReason, lostReason: reason });
+            void onSave({ ...awaitingLostReason, lostReason: reason }, attachments, initialAttachmentsRef.current);
           }}
           onClose={() => setAwaitingLostReason(null)}
         />
@@ -772,6 +789,7 @@ const CrmQuotesTab: React.FC<{
   const [linkQuote, setLinkQuote] = React.useState<CrmQuote | null>(null);
   const [pendingDelId, setPendingDelId] = React.useState<string | null>(null);
   const [attTick, setAttTick] = React.useState(0);
+  const [quotesWithAttachments, setQuotesWithAttachments] = React.useState<Set<string>>(new Set());
   const delTimerRef = React.useRef<ReturnType<typeof setTimeout> | null>(null);
   const quotesRef = React.useRef(quotes);
   const lastLocalEditAtRef = React.useRef(0);
@@ -779,6 +797,13 @@ const CrmQuotesTab: React.FC<{
   quotesRef.current = quotes;
 
   const touchLocalEdit = (): void => { lastLocalEditAtRef.current = Date.now(); };
+
+  const refreshAttachmentIndex = React.useCallback(async (): Promise<void> => {
+    try {
+      const idx = await loadQuoteAttachmentIndex(spService, quotesRef.current);
+      setQuotesWithAttachments(idx);
+    } catch { /* ignore */ }
+  }, [spService]);
 
   const pushPendingQuotesToSharePoint = React.useCallback((rows: CrmQuote[]): void => {
     for (const q of rows) {
@@ -846,12 +871,13 @@ const CrmQuotesTab: React.FC<{
       }
       const projs = await loadProjectsFromSharePoint(spService);
       setWonProjects(projs);
+      void refreshAttachmentIndex();
     } catch {
       if (Date.now() - lastLocalEditAtRef.current >= 15000) {
         setQuotes(processQuotes(loadQuotesLocalFromTab()));
       }
     }
-  }, [spService, syncQuoteChanges]);
+  }, [spService, syncQuoteChanges, refreshAttachmentIndex]);
 
   React.useEffect(() => {
     let cancelled = false;
@@ -877,7 +903,12 @@ const CrmQuotesTab: React.FC<{
       }
     })();
     return () => { cancelled = true; };
-  }, [spService, applyProcessedQuotes]);
+  }, [spService, applyProcessedQuotes, refreshAttachmentIndex]);
+
+  React.useEffect(() => {
+    if (!ready) return;
+    void refreshAttachmentIndex();
+  }, [ready, attTick, refreshAttachmentIndex]);
 
   React.useEffect(() => {
     if (!seedQuotes?.length) return;
@@ -904,11 +935,6 @@ const CrmQuotesTab: React.FC<{
       window.removeEventListener('focus', onFocus);
     };
   }, [ready, reload]);
-
-  const quotesWithAttachments = React.useMemo(
-    () => getAllQuoteAttachmentIds(),
-    [attTick, quotes],
-  );
 
   const companyName = (id: string): string => companies.find(c => c.id === id)?.name || '—';
   const personName = (id: string): string => persons.find(p => p.id === id)?.name || '—';
@@ -1036,7 +1062,11 @@ const CrmQuotesTab: React.FC<{
     }
   };
 
-  const saveQuote = (item: CrmQuote): void => {
+  const saveQuote = async (
+    item: CrmQuote,
+    attachments: CrmAttachment[],
+    prevAttachments: CrmAttachment[],
+  ): Promise<void> => {
     let saved = normalizeQuote(item);
     const prev = quotesRef.current.find(x => x.id === saved.id);
     if (saved.status === 'Lost') {
@@ -1045,6 +1075,21 @@ const CrmQuotesTab: React.FC<{
       }
     }
     persistQuotes(quotesRef.current.map(x => x.id === saved.id ? saved : x));
+    const withSp = await upsertQuoteToSharePoint(spService, { ...saved, spId: saved.spId ?? prev?.spId });
+    if (withSp.spId && withSp.spId !== saved.spId) {
+      setQuotes(cur => {
+        const updated = cur.map(x => x.id === withSp.id ? { ...x, spId: withSp.spId } : x);
+        quotesRef.current = updated;
+        try { localStorage.setItem(LS_QUOTES, JSON.stringify(updated)); } catch { /* ignore */ }
+        return updated;
+      });
+    }
+    if (withSp.spId) {
+      await syncQuoteAttachmentsToSharePoint(spService, withSp, attachments, prevAttachments);
+    } else {
+      setQuoteAttachments(saved.id, attachments);
+    }
+    await refreshAttachmentIndex();
     setAttTick(t => t + 1);
     setModal(null);
   };
@@ -1323,6 +1368,7 @@ const CrmQuotesTab: React.FC<{
       {modal && (
         <QuoteModal
           initial={modal}
+          spService={spService}
           persons={persons}
           companies={companies}
           onSave={saveQuote}
