@@ -1073,6 +1073,11 @@ const CrmQuotesTab: React.FC<{
       if (prev?.status !== 'Lost' || !saved.lostAt || isLegacyLostAt(saved)) {
         saved = { ...saved, lostAt: todayIso(), archived: false, archivedAt: undefined };
       }
+    } else if (prev?.archived || prev?.status === 'Lost') {
+      saved = { ...saved, archived: false, archivedAt: undefined };
+      if (prev?.status === 'Lost') {
+        saved = { ...saved, lostAt: undefined, lostReason: '' };
+      }
     }
     persistQuotes(quotesRef.current.map(x => x.id === saved.id ? saved : x));
     const withSp = await upsertQuoteToSharePoint(spService, { ...saved, spId: saved.spId ?? prev?.spId });
@@ -1106,6 +1111,22 @@ const CrmQuotesTab: React.FC<{
       }
       : x));
     setLostQuote(null);
+  };
+
+  const restoreQuote = (item: CrmQuote): void => {
+    const label = item.quoteNum || item.rfqNum;
+    if (!confirm(`Restore ${label} to the active quotes list as Sent?`)) return;
+    persistQuotes(quotesRef.current.map(x => x.id === item.id
+      ? {
+        ...x,
+        status: 'Sent' as CrmQuoteStatus,
+        archived: false,
+        archivedAt: undefined,
+        lostAt: undefined,
+        lostReason: '',
+      }
+      : x));
+    setArchiveView(false);
   };
 
   const markWon = (item: CrmQuote): void => {
@@ -1343,6 +1364,9 @@ const CrmQuotesTab: React.FC<{
                 <td style={{ ...tdBase, padding: '8px 10px 8px 6px' }}>
                   <div style={{ display: 'flex', flexDirection: 'column', gap: 4, minWidth: 64 }}>
                     <button onClick={() => setModal({ ...item })} style={{ ...actionBtn, border: 'none', background: C.purple, color: '#fff' }}>Edit</button>
+                    {item.archived && item.status === 'Lost' && (
+                      <button onClick={() => restoreQuote(item)} style={{ ...actionBtn, border: 'none', background: '#0d9488', color: '#fff' }}>Restore</button>
+                    )}
                     {!item.archived && item.status !== 'Lost' && (
                       <>
                         <button onClick={() => markWon(item)} style={{ ...actionBtn, border: 'none', background: C.green, color: '#fff' }}>WON</button>
