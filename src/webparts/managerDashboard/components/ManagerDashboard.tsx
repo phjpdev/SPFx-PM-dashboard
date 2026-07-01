@@ -3,7 +3,7 @@ import {
   Tag, HrsBar, RfiBar, Stat, Panel, FF, IBtn, DelModal, useToast,
   BtnPrimary, SDiv, CcField, fmtD, rfiTot, effSt, isOD
 } from '../../../shared/components/SharedComponents';
-import { IProject, IRfi, PROJ_STATUSES, RFI_STATUSES, RFI_TYPES, RFI_RESPONSES } from '../../../shared/models/IProject';
+import { IProject, IRfi, PROJ_STATUSES, RFI_STATUSES, RFI_TYPES, RFI_RESPONSES, isProjectDelivered, withProjectDeliveryOnSave, withProjectArchiveToggle } from '../../../shared/models/IProject';
 import { SharePointService } from '../../../shared/services/SharePointService';
 import styles from './ManagerDashboard.module.scss';
 import type { IManagerDashboardProps } from './IManagerDashboardProps';
@@ -1730,7 +1730,7 @@ const ManagerDashboard: React.FC<IManagerDashboardProps> = (props) => {
   // ── Stat cards
   const mainProjects = projects.filter(p => !p.isEwo);
   const allActive = mainProjects.filter(p => p.status === 'Active').length;
-  const allComplete = mainProjects.filter(p => p.status === 'Complete').length;
+  const allComplete = mainProjects.filter(isProjectDelivered).length;
   const allOverBudget = mainProjects.filter(p => p.status === 'Over Budget' || (p.hrsAllowed > 0 && p.hrsUsed > p.hrsAllowed)).length;
   const allEwos = projects.filter(p => p.isEwo).length;
   const totalHrsUsed = projects.reduce((s, p) => s + p.hrsUsed, 0);
@@ -1749,14 +1749,16 @@ const ManagerDashboard: React.FC<IManagerDashboardProps> = (props) => {
   // ── CRUD helpers
   const saveProject = async (d: IProject, isNew: boolean, addedFiles?: File[], removedFiles?: string[]): Promise<void> => {
     try {
+      const prev = isNew ? undefined : projects.find(p => p.id === d.id);
+      const payload = withProjectDeliveryOnSave(d, prev);
       if (isLocal()) {
         if (isNew) {
           const tempId = nextLocalId();
-          const saved: IProject = { ...d, id: d.projNum || String(tempId) };
-          setProjects(prev => [...prev, saved]);
+          const saved: IProject = { ...payload, id: payload.projNum || String(tempId) };
+          setProjects(prevList => [...prevList, saved]);
           toast('Project created (local mode — will sync when SP lists are ready).');
         } else {
-          setProjects(prev => prev.map(p => p.id === d.id ? { ...d } : p));
+          setProjects(prevList => prevList.map(p => p.id === payload.id ? { ...payload } : p));
           toast('Project saved (local mode).');
         }
         if (addedFiles && addedFiles.length > 0) {
@@ -1767,15 +1769,15 @@ const ManagerDashboard: React.FC<IManagerDashboardProps> = (props) => {
       }
       let spId: number | undefined;
       if (isNew) {
-        spId = await spService.current.addProject(d);
-        const saved: IProject = { ...d, id: d.projNum || String(spId), spId };
-        setProjects(prev => [...prev, saved]);
+        spId = await spService.current.addProject(payload);
+        const saved: IProject = { ...payload, id: payload.projNum || String(spId), spId };
+        setProjects(prevList => [...prevList, saved]);
         toast('Project created.');
       } else {
-        if (!d.spId) throw new Error('No spId on project');
-        spId = d.spId;
-        await spService.current.updateProject(d.spId, d);
-        setProjects(prev => prev.map(p => p.id === d.id ? { ...d } : p));
+        if (!payload.spId) throw new Error('No spId on project');
+        spId = payload.spId;
+        await spService.current.updateProject(payload.spId, payload);
+        setProjects(prevList => prevList.map(p => p.id === payload.id ? { ...payload } : p));
         toast('Project saved.');
       }
       const projListName = spService.current.getProjectListName();
@@ -1798,14 +1800,13 @@ const ManagerDashboard: React.FC<IManagerDashboardProps> = (props) => {
   };
 
   const toggleArchive = async (proj: IProject): Promise<void> => {
-    const newStatus = proj.status === 'Archive' ? 'Active' : 'Archive';
-    const updated = { ...proj, status: newStatus };
+    const updated = withProjectArchiveToggle(proj);
     try {
       if (!isLocal() && proj.spId) {
         await spService.current.updateProject(proj.spId, updated);
       }
       setProjects(prev => prev.map(p => p.id === proj.id ? updated : p));
-      toast(newStatus === 'Archive' ? 'Project archived.' : 'Project restored.');
+      toast(updated.status === 'Archive' ? 'Project archived.' : 'Project restored.');
     } catch (e) {
       const msg = (e instanceof Error) ? e.message : String(e);
       toast('Failed: ' + msg, 'error');

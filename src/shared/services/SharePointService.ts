@@ -204,7 +204,8 @@ export class SharePointService {
       invoices: (() => { try { return (JSON.parse(i.invoicesJson || '[]') as { invNumber?: string; invPct?: number; invProgressClaim?: string; invDate?: string; invPaid?: boolean }[]).map(inv => ({ invNumber: inv.invNumber || '', invPct: inv.invPct ?? 0, invProgressClaim: inv.invProgressClaim || '', invDate: inv.invDate || '', invPaid: !!inv.invPaid })); } catch { return []; } })(),
       isEwo: i.isEwo || false,
       ewoNum: i.ewoNum || '',
-      parentId: i.parentId || null
+      parentId: i.parentId || null,
+      deliveredAt: this.parseDate(i.deliveredAt),
     }));
   }
 
@@ -237,7 +238,8 @@ export class SharePointService {
       invoicesJson: JSON.stringify(d.invoices || []),
       isEwo: d.isEwo === true || (d.isEwo as unknown as string) === 'true',
       ewoNum: d.ewoNum || '',
-      parentId: d.parentId || null
+      parentId: d.parentId || null,
+      deliveredAt: d.deliveredAt ? d.deliveredAt : null,
     };
   }
 

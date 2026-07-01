@@ -4,7 +4,7 @@ import {
   Tag, HrsBar, RfiBar, SDiv, Stat, Panel, FF, IBtn, DelModal, useToast,
   BtnPrimary, CcField, fmtD, rfiTot, isOD, effSt, hrsColor, hrsRem, hpct
 } from '../../../shared/components/SharedComponents';
-import { IProject, IRfi, PROJ_STATUSES, RFI_STATUSES, RFI_TYPES, RFI_RESPONSES } from '../../../shared/models/IProject';
+import { IProject, IRfi, PROJ_STATUSES, RFI_STATUSES, RFI_TYPES, RFI_RESPONSES, isProjectDelivered } from '../../../shared/models/IProject';
 import { SharePointService } from '../../../shared/services/SharePointService';
 import styles from '../../../shared/styles/dashboard.module.scss';
 
@@ -234,7 +234,7 @@ const StaffDashboard: React.FC<IStaffDashboardProps> = ({ siteUrl, userDisplayNa
   const pStats = React.useMemo(() => {
     const active = projects.filter(p => p.status === 'Active').length;
     const ob = projects.filter(p => p.status === 'Over Budget' || (p.hrsAllowed > 0 && p.hrsUsed > p.hrsAllowed)).length;
-    const complete = projects.filter(p => p.status === 'Complete').length;
+    const complete = projects.filter(isProjectDelivered).length;
     const onHold = projects.filter(p => p.status === 'On Hold').length;
     return { active, ob, complete, onHold };
   }, [projects]);
