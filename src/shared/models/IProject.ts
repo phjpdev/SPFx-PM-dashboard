@@ -36,6 +36,8 @@ export interface IProject {
   isEwo: boolean;
   ewoNum: string;
   parentId: string | null;
+  /** Set when a project is marked Complete — kept when archived so delivered count stays correct. */
+  deliveredAt?: string;
 }
 
 export interface IRfi {
@@ -101,4 +103,37 @@ export const STATUS_CFG: Record<string, { bg: string; color: string; bd: string 
   'Closed': { bg: 'rgba(74,144,217,0.12)', color: '#2065b0', bd: '#4a90d9' },
   'Overdue': { bg: 'rgba(232,69,69,0.13)', color: '#b82020', bd: '#e84545' },
   'Partially Open (Revise and Resend)': { bg: 'rgba(249,115,22,0.12)', color: '#b84a10', bd: '#f97316' },
+};
+
+export const todayIsoDate = (): string => {
+  const t = new Date();
+  return `${t.getFullYear()}-${String(t.getMonth() + 1).padStart(2, '0')}-${String(t.getDate()).padStart(2, '0')}`;
+};
+
+export const isProjectDelivered = (p: IProject): boolean =>
+  p.status === 'Complete' || !!p.deliveredAt;
+
+/** Apply delivery date when saving status changes (Complete / Archive / Active). */
+export const withProjectDeliveryOnSave = (next: IProject, prev?: IProject): IProject => {
+  if (next.status === 'Complete' && !next.deliveredAt) {
+    return { ...next, deliveredAt: next.finishDate || todayIsoDate() };
+  }
+  if (next.status === 'Archive' && !next.deliveredAt && (prev?.status === 'Complete' || prev?.deliveredAt)) {
+    return { ...next, deliveredAt: prev?.deliveredAt || prev?.finishDate || todayIsoDate() };
+  }
+  if (next.status === 'Active' && prev && (prev.status === 'Complete' || prev.deliveredAt)) {
+    return { ...next, deliveredAt: undefined };
+  }
+  return next;
+};
+
+/** Archive / restore while preserving delivered state for KPI counts. */
+export const withProjectArchiveToggle = (proj: IProject): IProject => {
+  if (proj.status === 'Archive') {
+    return { ...proj, status: proj.deliveredAt ? 'Complete' : 'Active' };
+  }
+  const deliveredAt = proj.status === 'Complete' || proj.deliveredAt
+    ? (proj.deliveredAt || todayIsoDate())
+    : proj.deliveredAt;
+  return { ...proj, status: 'Archive', deliveredAt };
 };
