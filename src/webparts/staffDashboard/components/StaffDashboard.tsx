@@ -2,7 +2,7 @@ import * as React from 'react';
 import { IStaffDashboardProps } from './IStaffDashboardProps';
 import {
   Tag, HrsBar, RfiBar, SDiv, Stat, Panel, FF, IBtn, DelModal, useToast,
-  BtnPrimary, CcField, fmtD, rfiTot, isOD, effSt, hrsColor, hrsRem, hpct
+  BtnPrimary, CcField, fmtD, rfiTot, isOD, effSt, hrsColor, hrsRem, hpct, RememberSenderField
 } from '../../../shared/components/SharedComponents';
 import { IProject, IRfi, PROJ_STATUSES, RFI_STATUSES, RFI_TYPES, RFI_RESPONSES, isProjectDelivered } from '../../../shared/models/IProject';
 import { SharePointService } from '../../../shared/services/SharePointService';
@@ -691,12 +691,7 @@ const StaffDashboard: React.FC<IStaffDashboardProps> = ({ siteUrl, userDisplayNa
         <FF label="Submitted By">{inp(f.by, set('by'))}</FF>
         <FF label="By Company">{inp(f.byCompany, set('byCompany'))}</FF>
         {!selRfi && (
-          <div style={{ gridColumn: '1 / -1', marginTop: -4 }}>
-            <label style={{ display: 'flex', alignItems: 'center', gap: 8, fontFamily: 'Montserrat', fontSize: 12, color: 'var(--t4)', cursor: 'pointer' }}>
-              <input type="checkbox" checked={rememberSender} onChange={e => setRememberSender(e.target.checked)} />
-              Remember as my default sender
-            </label>
-          </div>
+          <RememberSenderField checked={rememberSender} onChange={setRememberSender} />
         )}
         <FF label="Email">{inp(f.email || '', set('email'), 'email')}</FF>
         <FF label="Client RFI Ref">{inp(f.clientRfi, set('clientRfi'))}</FF>

@@ -1,7 +1,7 @@
 import * as React from 'react';
 import {
   Tag, HrsBar, RfiBar, Stat, Panel, FF, IBtn, DelModal, useToast,
-  BtnPrimary, SDiv, CcField, fmtD, rfiTot, effSt, isOD
+  BtnPrimary, SDiv, CcField, fmtD, rfiTot, effSt, isOD, RememberSenderField
 } from '../../../shared/components/SharedComponents';
 import { IProject, IRfi, PROJ_STATUSES, RFI_STATUSES, RFI_TYPES, RFI_RESPONSES, isProjectDelivered, withProjectDeliveryOnSave, withProjectArchiveToggle } from '../../../shared/models/IProject';
 import { SharePointService } from '../../../shared/services/SharePointService';
@@ -1000,12 +1000,7 @@ const RfiForm: React.FC<RfiFormProps> = ({ initial, isNew, projects, rfis, userD
           <input style={inp} value={d.byCompany} onChange={e => set('byCompany', e.target.value)} />
         </FF>
         {isNew && (
-          <div style={{ gridColumn: '1 / -1', marginTop: -4 }}>
-            <label style={{ display: 'flex', alignItems: 'center', gap: 8, fontFamily: 'Montserrat', fontSize: 12, color: 'var(--t3)', cursor: 'pointer' }}>
-              <input type="checkbox" checked={rememberSender} onChange={e => setRememberSender(e.target.checked)} />
-              Remember as my default sender
-            </label>
-          </div>
+          <RememberSenderField checked={rememberSender} onChange={setRememberSender} />
         )}
         <FF label="Email">
           <input style={inp} type="email" value={d.email || ''} onChange={e => set('email', e.target.value)} />
