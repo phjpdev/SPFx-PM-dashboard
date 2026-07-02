@@ -1151,11 +1151,12 @@ interface RfiDetailProps {
   isManager: boolean;
   siteUrl: string;
   spService: SharePointService;
-  onSendEmail: (to: string, cc: string, subject: string, body: string) => Promise<void>;
+  onSendEmail: (to: string, cc: string, subject: string, body: string, pdfFileName: string) => Promise<void>;
   onEdit: () => void;
+  onNotify?: (message: string) => void;
 }
 
-const RfiDetail: React.FC<RfiDetailProps> = ({ rfi, proj, isManager, siteUrl, spService, onSendEmail, onEdit }) => {
+const RfiDetail: React.FC<RfiDetailProps> = ({ rfi, proj, isManager, siteUrl, spService, onSendEmail, onEdit, onNotify }) => {
   const total = rfiTot(rfi);
   const st = effSt(rfi);
   const [attachFiles, setAttachFiles] = React.useState<{ FileName: string; ServerRelativeUrl: string }[]>([]);
@@ -1180,7 +1181,6 @@ const RfiDetail: React.FC<RfiDetailProps> = ({ rfi, proj, isManager, siteUrl, sp
     const blob = generateRfiPdf(rfi, proj);
     if (!blob) return;
 
-    // Auto-download the PDF
     const fileName = 'RFI_' + rfi.rfiNum.replace(/[^a-zA-Z0-9_-]/g, '_') + '.pdf';
     const url = URL.createObjectURL(blob);
     const a = document.createElement('a');
@@ -1189,10 +1189,13 @@ const RfiDetail: React.FC<RfiDetailProps> = ({ rfi, proj, isManager, siteUrl, sp
     a.click();
     setTimeout(() => URL.revokeObjectURL(url), 3000);
 
-    // Send email via SharePoint if email is set
     const recipients = rfi.email || '';
-    if (!recipients) return;
+    if (!recipients) {
+      onNotify?.('PDF downloaded. Add a recipient email on the RFI to open an email draft.');
+      return;
+    }
     const subject = 'RFI ' + rfi.rfiNum + ' — ' + (proj ? proj.name : rfi.projectName);
+    const company = rfi.byCompany || RFI_DEFAULT_BY_COMPANY;
     const body =
       'Dear ' + (rfi.submittedTo || 'Client') + ',<br><br>' +
       'Please find attached RFI <strong>' + rfi.rfiNum + '</strong> for your review and response.<br><br>' +
@@ -1202,8 +1205,9 @@ const RfiDetail: React.FC<RfiDetailProps> = ({ rfi, proj, isManager, siteUrl, sp
       '<strong>Date Required:</strong> ' + fmtD(rfi.dateRequired) + '<br><br>' +
       '<strong>Description:</strong><br>' + (rfi.description || '—') + '<br><br>' +
       'Please respond by ' + fmtD(rfi.dateRequired) + '.<br><br>' +
-      'Kind regards,<br>' + (rfi.by || '') + '<br>3 Edge Design';
-    onSendEmail(recipients, rfi.cc || '', subject, body).catch(console.error);
+      'Kind regards,<br>' + (rfi.by || '') + '<br>' + company + '<br><br>' +
+      '<em>Please attach the downloaded PDF file (' + fileName + ') before sending. You may add further attachments as needed.</em>';
+    onSendEmail(recipients, rfi.cc || '', subject, body, fileName).catch(console.error);
   };
 
   return (
@@ -2724,25 +2728,20 @@ const ManagerDashboard: React.FC<IManagerDashboardProps> = (props) => {
             isManager={isManager}
             siteUrl={props.siteUrl}
             spService={spService.current}
-            onSendEmail={async (to, _cc, subject, body) => {
+            onNotify={toast}
+            onSendEmail={async (to, cc, subject, body, _pdfFileName) => {
               try {
-                // Open email client with pre-filled content
                 const plainBody = body.replace(/<br\s*\/?>/gi, '\n').replace(/<[^>]*>/g, '');
-                const mailto = 'mailto:' + encodeURIComponent(to) +
+                let mailto = 'mailto:' + encodeURIComponent(to) +
                   '?subject=' + encodeURIComponent(subject) +
                   '&body=' + encodeURIComponent(plainBody);
+                if (cc.trim()) {
+                  mailto += '&cc=' + encodeURIComponent(cc.trim());
+                }
                 const a = document.createElement('a');
                 a.href = mailto;
                 a.click();
-                // Record sent date on the RFI
-                if (panel.rfi && panel.rfi.spId) {
-                  const sentDate = new Date().toISOString().substring(0, 10);
-                  const updated = { ...panel.rfi, emailSentDate: sentDate };
-                  await spService.current.updateRfi(panel.rfi.spId, updated);
-                  setRfis(prev => prev.map(r => r.id === panel.rfi!.id ? updated : r));
-                  setPanel(prev => ({ ...prev, rfi: updated }));
-                }
-                toast('Email client opened. PDF downloaded. Sent date recorded.');
+                toast('PDF downloaded. Email draft opened — attach the PDF before sending.');
               } catch (e) {
                 toast('Failed: ' + String(e));
               }
