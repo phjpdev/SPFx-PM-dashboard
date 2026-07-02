@@ -7,6 +7,7 @@ import {
 import { IProject, IRfi, PROJ_STATUSES, RFI_STATUSES, RFI_TYPES, RFI_RESPONSES, isProjectDelivered } from '../../../shared/models/IProject';
 import { SharePointService } from '../../../shared/services/SharePointService';
 import { applyProjectDefaultsById } from '../../../shared/utils/rfiProjectDefaults';
+import { applySenderDefaultsToRfi, saveSenderDefaults } from '../../../shared/utils/rfiSenderDefaults';
 import styles from '../../../shared/styles/dashboard.module.scss';
 
 // ── Types ────────────────────────────────────────────────────────────────────
@@ -114,6 +115,7 @@ const StaffDashboard: React.FC<IStaffDashboardProps> = ({ siteUrl, userDisplayNa
   const [selRfi, setSelRfi] = React.useState<IRfi | null>(null);
   const [rfiForm, setRfiForm] = React.useState<IRfi>(BLANK_RFI());
   const [rfiSaving, setRfiSaving] = React.useState(false);
+  const [rememberSender, setRememberSender] = React.useState(true);
 
   // Delete modal
   const [delTarget, setDelTarget] = React.useState<{ type: 'project' | 'rfi'; item: IProject | IRfi } | null>(null);
@@ -328,10 +330,11 @@ const StaffDashboard: React.FC<IStaffDashboardProps> = ({ siteUrl, userDisplayNa
     const maxSeq = rfis.reduce((m, r) => Math.max(m, r.rfiSeq || 0), 0);
     blank.rfiSeq = maxSeq + 1;
     if (!projId) blank.rfiNum = `RFI-${String(blank.rfiSeq).padStart(3, '0')}`;
+    blank = applySenderDefaultsToRfi(blank, userDisplayName);
     setRfiForm(blank);
     setSelRfi(null);
     setRfiPanel('form');
-  }, [rfis, projects]);
+  }, [rfis, projects, userDisplayName]);
 
   const openEditRfi = React.useCallback((r: IRfi) => {
     setRfiForm({ ...r });
@@ -349,6 +352,9 @@ const StaffDashboard: React.FC<IStaffDashboardProps> = ({ siteUrl, userDisplayNa
     if (!rfiForm.description.trim()) { showToast('Description is required', 'error'); return; }
     setRfiSaving(true);
     try {
+      if (!selRfi && rememberSender && userDisplayName.trim()) {
+        saveSenderDefaults(userDisplayName.trim(), { by: rfiForm.by, byCompany: rfiForm.byCompany });
+      }
       if (selRfi && selRfi.spId) {
         await svc.updateRfi(selRfi.spId, rfiForm);
         showToast('RFI updated successfully');
@@ -550,12 +556,15 @@ const StaffDashboard: React.FC<IStaffDashboardProps> = ({ siteUrl, userDisplayNa
   const handleRfiProjectChange = React.useCallback((projId: string) => {
     setRfiForm(prev => {
       if (!selRfi) {
-        return applyProjectDefaultsById(prev, projId, projects, rfis);
+        return applySenderDefaultsToRfi(
+          applyProjectDefaultsById(prev, projId, projects, rfis),
+          userDisplayName
+        );
       }
       const p = projects.find(pr => pr.id === projId || pr.projNum === projId);
       return { ...prev, projectId: projId, projectName: p?.name || prev.projectName };
     });
-  }, [projects, rfis, selRfi]);
+  }, [projects, rfis, selRfi, userDisplayName]);
 
   // ── Render: Project Form ───────────────────────────────────────────────────
   const renderProjectForm = (): JSX.Element => {
@@ -681,6 +690,14 @@ const StaffDashboard: React.FC<IStaffDashboardProps> = ({ siteUrl, userDisplayNa
         <FF label="To Company">{inp(f.toCompany, set('toCompany'))}</FF>
         <FF label="Submitted By">{inp(f.by, set('by'))}</FF>
         <FF label="By Company">{inp(f.byCompany, set('byCompany'))}</FF>
+        {!selRfi && (
+          <div style={{ gridColumn: '1 / -1', marginTop: -4 }}>
+            <label style={{ display: 'flex', alignItems: 'center', gap: 8, fontFamily: 'Montserrat', fontSize: 12, color: 'var(--t4)', cursor: 'pointer' }}>
+              <input type="checkbox" checked={rememberSender} onChange={e => setRememberSender(e.target.checked)} />
+              Remember as my default sender
+            </label>
+          </div>
+        )}
         <FF label="Email">{inp(f.email || '', set('email'), 'email')}</FF>
         <FF label="Client RFI Ref">{inp(f.clientRfi, set('clientRfi'))}</FF>
         <FF label="Description" span2>{txa(f.description, set('description'), 4)}</FF>
