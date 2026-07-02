@@ -1,7 +1,7 @@
 import { IRfi } from '../models/IProject';
 import { ITeamMember } from '../models/ITask';
 
-export const RFI_DEFAULT_BY_COMPANY = 'Z Edge Design';
+export const RFI_DEFAULT_BY_COMPANY = '3 Edge Design';
 
 export interface RfiSenderDefaults {
   by: string;
