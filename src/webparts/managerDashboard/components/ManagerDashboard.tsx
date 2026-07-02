@@ -18,6 +18,8 @@ import CrmBoard from './CrmBoard';
 import logoImg from '../assets/3edge-logo.png';
 import { drawLetterhead, drawPdfBg } from '../../../shared/utils/pdfLetterhead';
 import { applyProjectDefaultsById } from '../../../shared/utils/rfiProjectDefaults';
+import { applySenderDefaultsToRfi, RFI_DEFAULT_BY_COMPANY, saveSenderDefaults } from '../../../shared/utils/rfiSenderDefaults';
+import { ITeamMember } from '../../../shared/models/ITask';
 
 // ── Montserrat local fonts ─────────────────────────────────────────────────────
 import _fExtraLight from '../assets/Montserrat-ExtraLight.ttf';
@@ -908,17 +910,24 @@ interface RfiFormProps {
   isNew: boolean;
   projects: IProject[];
   rfis: IRfi[];
+  userDisplayName: string;
+  teamMembers: ITeamMember[];
   onSave: (r: IRfi, files: File[]) => void;
   onCancel: () => void;
 }
 
-const RfiForm: React.FC<RfiFormProps> = ({ initial, isNew, projects, rfis, onSave, onCancel }) => {
+const RfiForm: React.FC<RfiFormProps> = ({ initial, isNew, projects, rfis, userDisplayName, teamMembers, onSave, onCancel }) => {
   const [d, setD] = React.useState<IRfi>(() => {
+    let rfi = { ...initial };
     if (isNew && initial.projectId) {
-      return applyProjectDefaultsById({ ...initial }, initial.projectId, projects, rfis, { byCompany: '3 Edge Design' });
+      rfi = applyProjectDefaultsById(rfi, initial.projectId, projects, rfis, { byCompany: RFI_DEFAULT_BY_COMPANY });
     }
-    return { ...initial };
+    if (isNew) {
+      rfi = applySenderDefaultsToRfi(rfi, userDisplayName, teamMembers);
+    }
+    return rfi;
   });
+  const [rememberSender, setRememberSender] = React.useState(true);
   const [rfiValError, setRfiValError] = React.useState('');
   const [pendingFiles, setPendingFiles] = React.useState<File[]>([]);
   const fileRef = React.useRef<HTMLInputElement>(null);
@@ -929,7 +938,11 @@ const RfiForm: React.FC<RfiFormProps> = ({ initial, isNew, projects, rfis, onSav
 
   const onProjectChange = (projId: string): void => {
     if (isNew && projId) {
-      setD(prev => applyProjectDefaultsById(prev, projId, projects, rfis, { byCompany: '3 Edge Design' }));
+      setD(prev => applySenderDefaultsToRfi(
+        applyProjectDefaultsById(prev, projId, projects, rfis, { byCompany: RFI_DEFAULT_BY_COMPANY }),
+        userDisplayName,
+        teamMembers
+      ));
       return;
     }
     const p = projects.find(x => x.id === projId);
@@ -985,6 +998,14 @@ const RfiForm: React.FC<RfiFormProps> = ({ initial, isNew, projects, rfis, onSav
         <FF label="By Company">
           <input style={inp} value={d.byCompany} onChange={e => set('byCompany', e.target.value)} />
         </FF>
+        {isNew && (
+          <div style={{ gridColumn: '1 / -1', marginTop: -4 }}>
+            <label style={{ display: 'flex', alignItems: 'center', gap: 8, fontFamily: 'Montserrat', fontSize: 12, color: 'var(--t3)', cursor: 'pointer' }}>
+              <input type="checkbox" checked={rememberSender} onChange={e => setRememberSender(e.target.checked)} />
+              Remember as my default sender
+            </label>
+          </div>
+        )}
         <FF label="Email">
           <input style={inp} type="email" value={d.email || ''} onChange={e => set('email', e.target.value)} />
         </FF>
@@ -1112,6 +1133,9 @@ const RfiForm: React.FC<RfiFormProps> = ({ initial, isNew, projects, rfis, onSav
           if (!d.description) missing.push('Description');
           if (missing.length > 0) { setRfiValError('Required: ' + missing.join(', ')); return; }
           setRfiValError('');
+          if (isNew && rememberSender && userDisplayName.trim()) {
+            saveSenderDefaults(userDisplayName.trim(), { by: d.by, byCompany: d.byCompany });
+          }
           onSave(d, pendingFiles);
         }}>{isNew ? 'CREATE RFI' : 'SAVE CHANGES'}</BtnPrimary>
         <button onClick={onCancel} style={{ fontFamily: 'Montserrat', fontSize: 12.5, padding: '9px 18px', background: 'transparent', border: '1px solid var(--bd)', color: 'var(--t2)', borderRadius: 7, cursor: 'pointer' }}>Cancel</button>
@@ -1465,6 +1489,7 @@ const ManagerDashboard: React.FC<IManagerDashboardProps> = (props) => {
   // ── Data
   const [projects, setProjects] = React.useState<IProject[]>([]);
   const [rfis, setRfis] = React.useState<IRfi[]>([]);
+  const [teamMembers, setTeamMembers] = React.useState<ITeamMember[]>([]);
   const [spLoading, setSpLoading] = React.useState(true);
 
   // ── View
@@ -1549,12 +1574,14 @@ const ManagerDashboard: React.FC<IManagerDashboardProps> = (props) => {
     setSpLoading(true);
     setSpMode('detecting');
     try {
-      const [p, r] = await Promise.all([
+      const [p, r, tm] = await Promise.all([
         spService.current.loadProjects(),
-        spService.current.loadRfis()
+        spService.current.loadRfis(),
+        spService.current.loadTeamMembers().catch(() => [] as ITeamMember[])
       ]);
       setProjects(p);
       setRfis(r);
+      setTeamMembers(tm);
       setSpMode('live');
       // Load last TD import timestamp
       spService.current.getSetting('lastTdImport').then(v => { if (v) setLastTdImport(v); }).catch(() => undefined);
@@ -2742,6 +2769,8 @@ const ManagerDashboard: React.FC<IManagerDashboardProps> = (props) => {
             isNew={!panel.rfi || !panel.rfi.spId}
             projects={projects}
             rfis={rfis}
+            userDisplayName={props.userDisplayName}
+            teamMembers={teamMembers}
             onSave={(d, files) => { saveRfi(d, !panel.rfi || !panel.rfi.spId, files).catch(() => undefined); }}
             onCancel={() => setPanel({ type: null })}
           />
