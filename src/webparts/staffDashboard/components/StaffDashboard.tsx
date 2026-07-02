@@ -6,6 +6,7 @@ import {
 } from '../../../shared/components/SharedComponents';
 import { IProject, IRfi, PROJ_STATUSES, RFI_STATUSES, RFI_TYPES, RFI_RESPONSES, isProjectDelivered } from '../../../shared/models/IProject';
 import { SharePointService } from '../../../shared/services/SharePointService';
+import { applyProjectDefaultsById } from '../../../shared/utils/rfiProjectDefaults';
 import styles from '../../../shared/styles/dashboard.module.scss';
 
 // ── Types ────────────────────────────────────────────────────────────────────
@@ -319,17 +320,18 @@ const StaffDashboard: React.FC<IStaffDashboardProps> = ({ siteUrl, userDisplayNa
 
   // ── CRUD: RFI ──────────────────────────────────────────────────────────────
   const openNewRfi = React.useCallback((projId?: string, projName?: string) => {
-    const blank = BLANK_RFI();
-    if (projId) { blank.projectId = projId; blank.projectName = projName || ''; }
-    // Auto-assign next RFI seq
+    let blank = BLANK_RFI();
+    if (projId) {
+      blank = applyProjectDefaultsById(blank, projId, projects, rfis);
+      if (projName) blank.projectName = projName;
+    }
     const maxSeq = rfis.reduce((m, r) => Math.max(m, r.rfiSeq || 0), 0);
     blank.rfiSeq = maxSeq + 1;
-    // Auto-assign rfiNum
-    blank.rfiNum = `RFI-${String(blank.rfiSeq).padStart(3, '0')}`;
+    if (!projId) blank.rfiNum = `RFI-${String(blank.rfiSeq).padStart(3, '0')}`;
     setRfiForm(blank);
     setSelRfi(null);
     setRfiPanel('form');
-  }, [rfis]);
+  }, [rfis, projects]);
 
   const openEditRfi = React.useCallback((r: IRfi) => {
     setRfiForm({ ...r });
@@ -546,13 +548,14 @@ const StaffDashboard: React.FC<IStaffDashboardProps> = ({ siteUrl, userDisplayNa
 
   // ── Set project from RFI form selector ────────────────────────────────────
   const handleRfiProjectChange = React.useCallback((projId: string) => {
-    const p = projects.find(pr => pr.id === projId || pr.projNum === projId);
-    setRfiForm(prev => ({
-      ...prev,
-      projectId: projId,
-      projectName: p?.name || prev.projectName
-    }));
-  }, [projects]);
+    setRfiForm(prev => {
+      if (!selRfi) {
+        return applyProjectDefaultsById(prev, projId, projects, rfis);
+      }
+      const p = projects.find(pr => pr.id === projId || pr.projNum === projId);
+      return { ...prev, projectId: projId, projectName: p?.name || prev.projectName };
+    });
+  }, [projects, rfis, selRfi]);
 
   // ── Render: Project Form ───────────────────────────────────────────────────
   const renderProjectForm = (): JSX.Element => {

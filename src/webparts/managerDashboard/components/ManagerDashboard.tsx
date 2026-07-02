@@ -17,6 +17,7 @@ import CrmBoard from './CrmBoard';
 // ── Assets ────────────────────────────────────────────────────────────────────
 import logoImg from '../assets/3edge-logo.png';
 import { drawLetterhead, drawPdfBg } from '../../../shared/utils/pdfLetterhead';
+import { applyProjectDefaultsById } from '../../../shared/utils/rfiProjectDefaults';
 
 // ── Montserrat local fonts ─────────────────────────────────────────────────────
 import _fExtraLight from '../assets/Montserrat-ExtraLight.ttf';
@@ -912,7 +913,12 @@ interface RfiFormProps {
 }
 
 const RfiForm: React.FC<RfiFormProps> = ({ initial, isNew, projects, rfis, onSave, onCancel }) => {
-  const [d, setD] = React.useState<IRfi>({ ...initial });
+  const [d, setD] = React.useState<IRfi>(() => {
+    if (isNew && initial.projectId) {
+      return applyProjectDefaultsById({ ...initial }, initial.projectId, projects, rfis, { byCompany: '3 Edge Design' });
+    }
+    return { ...initial };
+  });
   const [rfiValError, setRfiValError] = React.useState('');
   const [pendingFiles, setPendingFiles] = React.useState<File[]>([]);
   const fileRef = React.useRef<HTMLInputElement>(null);
@@ -922,19 +928,12 @@ const RfiForm: React.FC<RfiFormProps> = ({ initial, isNew, projects, rfis, onSav
   };
 
   const onProjectChange = (projId: string): void => {
-    const p = projects.find(x => x.id === projId);
-    const updates: Partial<IRfi> = { projectId: projId, projectName: p ? p.name : '' };
-    if (isNew && p) {
-      const count = rfis.filter(r => r.projectId === projId).length;
-      const seq = String(count + 1).padStart(3, '0');
-      updates.rfiNum = `${p.projNum}-RFI-${seq}`;
-      // Inherit company details from parent project
-      if (p.contact) updates.submittedTo = p.contact;
-      if (p.company) updates.toCompany = p.company;
-      if (p.email) updates.email = p.email;
-      updates.byCompany = '3 Edge Design';
+    if (isNew && projId) {
+      setD(prev => applyProjectDefaultsById(prev, projId, projects, rfis, { byCompany: '3 Edge Design' }));
+      return;
     }
-    setD(prev => ({ ...prev, ...updates }));
+    const p = projects.find(x => x.id === projId);
+    setD(prev => ({ ...prev, projectId: projId, projectName: p ? p.name : '' }));
   };
 
   const totalImpact = (d.model || 0) + (d.connections || 0) + (d.checking || 0) + (d.drawings || 0) + (d.admin || 0);
