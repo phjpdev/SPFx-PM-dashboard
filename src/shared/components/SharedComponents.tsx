@@ -156,6 +156,44 @@ export const FF: React.FC<{ label: string; span2?: boolean; required?: boolean; 
   </div>
 );
 
+// ── RFI default sender option ────────────────────────────────────────────────
+export const RememberSenderField: React.FC<{
+  checked: boolean;
+  onChange: (checked: boolean) => void;
+}> = ({ checked, onChange }) => (
+  <FF label="Default Sender" span2>
+    <label
+      style={{
+        display: 'flex',
+        alignItems: 'flex-start',
+        gap: 10,
+        cursor: 'pointer',
+        padding: '10px 12px',
+        background: 'var(--s1)',
+        border: '1px solid var(--bd)',
+        borderRadius: 6,
+        width: '100%',
+        boxSizing: 'border-box',
+      }}
+    >
+      <input
+        type="checkbox"
+        checked={checked}
+        onChange={e => onChange(e.target.checked)}
+        style={{ marginTop: 3, flexShrink: 0, width: 16, height: 16, cursor: 'pointer' }}
+      />
+      <span style={{ minWidth: 0 }}>
+        <span style={{ display: 'block', fontFamily: 'Montserrat', fontWeight: 600, fontSize: 13, color: 'var(--t1)' }}>
+          Save as my default sender
+        </span>
+        <span style={{ display: 'block', fontFamily: 'Montserrat', fontSize: 12, color: 'var(--t2)', marginTop: 4, lineHeight: 1.5 }}>
+          Prepared By and By Company will be filled automatically on future RFIs when you create this one.
+        </span>
+      </span>
+    </label>
+  </FF>
+);
+
 // ── Icon Button ──────────────────────────────────────────────────────────────
 export const IBtn: React.FC<{ onClick: () => void; title?: string; danger?: boolean; children: React.ReactNode }> = ({ onClick, title, danger, children }) => {
   const [h, setH] = useState(false);
