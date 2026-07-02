@@ -19,6 +19,7 @@ import logoImg from '../assets/3edge-logo.png';
 import { drawLetterhead, drawPdfBg } from '../../../shared/utils/pdfLetterhead';
 import { applyProjectDefaultsById } from '../../../shared/utils/rfiProjectDefaults';
 import { applySenderDefaultsToRfi, RFI_DEFAULT_BY_COMPANY, saveSenderDefaults } from '../../../shared/utils/rfiSenderDefaults';
+import { rfiPdfFileName } from '../../../shared/utils/rfiPdfFilename';
 import { ITeamMember } from '../../../shared/models/ITask';
 
 // ── Montserrat local fonts ─────────────────────────────────────────────────────
@@ -1181,7 +1182,7 @@ const RfiDetail: React.FC<RfiDetailProps> = ({ rfi, proj, isManager, siteUrl, sp
     const blob = generateRfiPdf(rfi, proj);
     if (!blob) return;
 
-    const fileName = 'RFI_' + rfi.rfiNum.replace(/[^a-zA-Z0-9_-]/g, '_') + '.pdf';
+    const fileName = rfiPdfFileName(rfi.rfiNum);
     const url = URL.createObjectURL(blob);
     const a = document.createElement('a');
     a.href = url;
