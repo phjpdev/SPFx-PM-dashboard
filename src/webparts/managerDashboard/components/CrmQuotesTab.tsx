@@ -11,7 +11,7 @@ import {
   setQuoteBudgetForYear, MONTH_LABELS,
   type CrmQuoteBudget, type CrmQuoteBudgetStore,
 } from './crmStorage';
-import { normalizeCrmQuote } from './crmRfqNormalize';
+import { normalizeCrmQuote, compareQuoteNums } from './crmRfqNormalize';
 import { nextProjNum, quoteToCrmProject, quoteToIProject } from './crmProjectHelpers';
 import type { SharePointService } from '../../../shared/services/SharePointService';
 import type { IProject } from '../../../shared/models/IProject';
@@ -1028,7 +1028,7 @@ const CrmQuotesTab: React.FC<{
       item.projectTitle.toLowerCase().includes(q) ||
       companyName(item.organizationId).toLowerCase().includes(q)
     );
-  });
+  }).sort((a, b) => compareQuoteNums(a.quoteNum, b.quoteNum));
 
   const persistQuotes = (next: CrmQuote[]): void => {
     touchLocalEdit();
@@ -1302,7 +1302,9 @@ const CrmQuotesTab: React.FC<{
           Archive{archivedQuotes.length > 0 ? ` (${archivedQuotes.length})` : ''}
         </button>
         <button
-          onClick={() => exportQuotesCsv(archiveView ? archivedQuotes : yearQuotes, year, companyName, personName)}
+          onClick={() => exportQuotesCsv(
+            [...(archiveView ? archivedQuotes : yearQuotes)].sort((a, b) => compareQuoteNums(a.quoteNum, b.quoteNum)),
+            year, companyName, personName)}
           style={{ padding: '7px 16px', borderRadius: 4, border: `1px solid ${C.borderMd}`, background: C.surface, fontFamily: FF, fontWeight: 700, fontSize: 12, color: C.text, cursor: 'pointer', flexShrink: 0, whiteSpace: 'nowrap' }}
         >
           Export All

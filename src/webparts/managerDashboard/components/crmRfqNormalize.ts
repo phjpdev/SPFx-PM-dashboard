@@ -102,6 +102,16 @@ export const normalizeQuoteNum = (raw: string): string => {
   return v;
 };
 
+/** Sort quote numbers numerically, lowest first (QU-0352 before QU-0532). Empty values sort last. */
+export const compareQuoteNums = (a: string, b: string): number => {
+  const qa = (a || '').trim();
+  const qb = (b || '').trim();
+  if (!qa && !qb) return 0;
+  if (!qa) return 1;
+  if (!qb) return -1;
+  return qa.localeCompare(qb, undefined, { numeric: true });
+};
+
 const asQuoteStatus = (v: unknown): CrmQuoteStatus => {
   const s = String(v || 'Draft');
   if (s === 'Accepted') return 'Draft';
