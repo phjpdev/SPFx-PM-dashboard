@@ -976,8 +976,13 @@ const CrmQuotesTab: React.FC<{
 
   const stats = React.useMemo(() => {
     const sent = yearQuotes.filter(q => q.status === 'Sent');
-    const lost = yearQuotes.filter(q => q.status === 'Lost');
-    const totalHours = yearQuotes.reduce((s, q) => s + (q.approximateHours || 0), 0);
+    const lostTotal = quotesForYear.filter(q => q.status === 'Lost').length;
+    const lostArchived = archivedQuotes.length;
+    const won = wonForYear.length;
+    const active = yearQuotes.length;
+    const totalAll = quotesForYear.length + won;
+    const totalHours = quotesForYear.reduce((s, q) => s + (q.approximateHours || 0), 0)
+      + wonForYear.reduce((s, p) => s + (p.approximateHours || 0), 0);
     const quoteValue = (q: { projectValue?: number }): number => q.projectValue || 0;
     const quoteInMonth = (q: CrmQuote, mo: number): boolean => {
       const ref = q.quotedDate || q.dateReceived;
@@ -994,13 +999,14 @@ const CrmQuotesTab: React.FC<{
         .reduce((s, p) => s + quoteValue(p), 0);
     const yearPct = budget.yearTarget > 0 ? Math.round((yearActual / budget.yearTarget) * 100) : null;
     const monthPct = monthBudgetTarget > 0 ? Math.round((monthActual / monthBudgetTarget) * 100) : null;
-    const won = wonForYear.length;
-    const decided = won + lost.length;
+    const decided = won + lostTotal;
     const winRate = decided > 0 ? Math.round((won / decided) * 100) : 0;
     return {
-      total: yearQuotes.length,
+      total: totalAll,
+      active,
       sent: sent.length,
-      lost: lost.length,
+      lost: lostTotal,
+      lostArchived,
       won,
       winRate,
       totalHours,
@@ -1009,7 +1015,7 @@ const CrmQuotesTab: React.FC<{
       yearPct,
       monthPct,
     };
-  }, [yearQuotes, quotesForYear, wonForYear, budget, month, monthBudgetTarget, year]);
+  }, [yearQuotes, quotesForYear, archivedQuotes, wonForYear, budget, month, monthBudgetTarget, year]);
 
   const q = search.toLowerCase();
   const listSource = archiveView ? archivedQuotes : yearQuotes;
@@ -1210,7 +1216,12 @@ const CrmQuotesTab: React.FC<{
   return (
     <>
       <div style={{ display: 'flex', gap: 12, flexWrap: 'wrap', padding: '16px 0 12px 0' }}>
-        <KpiCard label="Total Quotes" accent={C.purple} value={String(stats.total)} sub={`${year} year`} />
+        <KpiCard
+          label="Total Quotes"
+          accent={C.purple}
+          value={String(stats.total)}
+          sub={`${year} · ${stats.won} won · ${stats.lost} lost · ${stats.active} active`}
+        />
         <KpiCard label="Sent" accent="#3b82c4" value={String(stats.sent)} sub="awaiting response" />
         <KpiCard
           label="Win Rate"
@@ -1218,7 +1229,12 @@ const CrmQuotesTab: React.FC<{
           value={`${stats.winRate}%`}
           sub={`${stats.won} won · ${stats.lost} lost`}
         />
-        <KpiCard label="Lost" accent={C.red} value={String(stats.lost)} sub="declined" />
+        <KpiCard
+          label="Lost"
+          accent={C.red}
+          value={String(stats.lost)}
+          sub={stats.lostArchived > 0 ? `${stats.lostArchived} archived · declined` : 'declined'}
+        />
         <BudgetKpiCard
           label="Quote Budget Year"
           actual={stats.yearActual}
