@@ -1210,6 +1210,7 @@ export class SharePointService {
       relatedRfqId: i.relatedRfqId || '',
       lostReason: i.lostReason || '',
       status: (i.status || 'Draft') as CrmQuoteStatus,
+      followUpDate: this.parseDate(i.followUpDate),
       lostAt: this.parseDate(i.lostAt),
       archived: !!i.archived,
       archivedAt: this.parseDate(i.archivedAt),
@@ -1291,7 +1292,7 @@ export class SharePointService {
     await this.ensureCrmList(LIST_CRM_QUOTES, 'CRM Quotes');
     for (const n of ['quoteNum', 'rfqId', 'rfqNum', 'lostReason', 'status', 'relatedRfqId', ...coreText]) await ef(n, 2);
     for (const n of coreNote) await ef(n, 3);
-    for (const n of ['quotedDate', 'lostAt', 'archivedAt', ...coreDate]) await ef(n, 4);
+    for (const n of ['quotedDate', 'followUpDate', 'lostAt', 'archivedAt', ...coreDate]) await ef(n, 4);
     for (const n of ['createQuoteXero', 'archived', ...coreBool]) await ef(n, 8);
     for (const n of coreNum) await ef(n, 9);
   }
@@ -1308,6 +1309,7 @@ export class SharePointService {
       relatedRfqId: d.relatedRfqId || '',
       lostReason: d.lostReason || '',
       status: d.status || 'Draft',
+      followUpDate: d.followUpDate || null,
       lostAt: d.lostAt || null,
       archived: !!d.archived,
       archivedAt: d.archivedAt || null,

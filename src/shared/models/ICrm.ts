@@ -110,6 +110,8 @@ export interface CrmQuote extends CrmEnquiryCore {
   relatedRfqId: string;
   lostReason: string;
   status: CrmQuoteStatus;
+  /** ISO date to chase the client next — shown beside status on the main sheet */
+  followUpDate?: string;
   /** ISO date when quote was marked lost */
   lostAt?: string;
   archived?: boolean;
