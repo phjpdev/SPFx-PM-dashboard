@@ -382,8 +382,21 @@ const QuoteModal: React.FC<{
   const [d, setD] = React.useState<CrmQuote>(() => ({ ...initial, quoteNum: ensureQuPrefix(initial.quoteNum) }));
   const [attachments, setAttachments] = React.useState<CrmAttachment[]>(() => getQuoteAttachments(initial.id));
   const [awaitingLostReason, setAwaitingLostReason] = React.useState<CrmQuote | null>(null);
+  const [noteDate, setNoteDate] = React.useState<string>(todayIso());
+  const notesRef = React.useRef<HTMLTextAreaElement | null>(null);
   const initialAttachmentsRef = React.useRef<CrmAttachment[]>(getQuoteAttachments(initial.id));
   const set = <K extends keyof CrmQuote>(k: K, v: CrmQuote[K]): void => setD(p => ({ ...p, [k]: v }));
+
+  /** Append "d/m/yy - " on a new line so dated notes match the existing style (e.g. "Email Bruce 21/7/26 - …"). */
+  const addDatedNoteLine = (): void => {
+    const dt = new Date(noteDate + 'T00:00:00');
+    const stamp = isNaN(dt.getTime()) ? noteDate : `${dt.getDate()}/${dt.getMonth() + 1}/${String(dt.getFullYear()).slice(2)}`;
+    setD(p => ({ ...p, notes: (p.notes && p.notes.trim() ? p.notes.replace(/\s+$/, '') + '\n' : '') + stamp + ' - ' }));
+    setTimeout(() => {
+      const el = notesRef.current;
+      if (el) { el.focus(); el.setSelectionRange(el.value.length, el.value.length); }
+    }, 0);
+  };
   const grid2: React.CSSProperties = { display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '14px 18px' };
 
   React.useEffect(() => {
@@ -561,13 +574,23 @@ const QuoteModal: React.FC<{
               )}
             </div>
             <div>
-              {initial.status === 'Lost' && (
+              {initial.status === 'Lost' ? (
                 <>
                   <label style={ml}>Lost Reason</label>
                   <select value={d.lostReason || ''} onChange={e => set('lostReason', e.target.value)} style={mi}>
                     <option value="">— Select reason —</option>
                     {LOST_REASONS.map(r => <option key={r} value={r}>{r}</option>)}
                   </select>
+                </>
+              ) : (d.status === 'Sent' || d.status === 'Pending' || d.status === 'Follow up') && (
+                <>
+                  <label style={ml}>Follow up date</label>
+                  <input
+                    type="date"
+                    value={d.followUpDate || ''}
+                    onChange={e => set('followUpDate', e.target.value)}
+                    style={mi}
+                  />
                 </>
               )}
             </div>
@@ -597,8 +620,26 @@ const QuoteModal: React.FC<{
             </div>
           </div>
           <div>
-            <label style={ml}>Notes</label>
-            <textarea value={d.notes} onChange={e => set('notes', e.target.value)} rows={4} style={{ ...mi, resize: 'vertical', minHeight: 80 }} />
+            <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 10 }}>
+              <label style={ml}>Notes</label>
+              <div style={{ display: 'flex', alignItems: 'center', gap: 6, marginBottom: 4 }}>
+                <input
+                  type="date"
+                  value={noteDate}
+                  onChange={e => setNoteDate(e.target.value)}
+                  style={{ padding: '4px 6px', borderRadius: 4, border: `1px solid ${C.borderMd}`, background: C.surface, fontFamily: FF, fontSize: 11, color: C.text, boxSizing: 'border-box' }}
+                />
+                <button
+                  type="button"
+                  onClick={addDatedNoteLine}
+                  title="Insert a dated line into notes"
+                  style={{ padding: '4px 10px', borderRadius: 4, border: `1px solid ${C.borderMd}`, background: C.thBg, color: C.sub, fontFamily: FF, fontWeight: 700, fontSize: 11, cursor: 'pointer', whiteSpace: 'nowrap' }}
+                >
+                  + Add date
+                </button>
+              </div>
+            </div>
+            <textarea ref={notesRef} value={d.notes} onChange={e => set('notes', e.target.value)} rows={4} style={{ ...mi, resize: 'vertical', minHeight: 80 }} />
           </div>
           <DocumentUploadSection attachments={attachments} onChange={setAttachments} />
         </div>
@@ -1377,7 +1418,17 @@ const CrmQuotesTab: React.FC<{
                 <td style={{ ...tdBase, fontFamily: FF, fontSize: 12, fontWeight: 600, color: C.text }}>{item.projectValue ? fmtMoney(item.projectValue) : '—'}</td>
                 <td style={{ ...tdBase, fontFamily: FF, fontSize: 12, fontWeight: 600, color: C.sub }}>{item.approximateHours ? String(item.approximateHours) : '—'}</td>
                 <td style={tdBase}>
-                  <span style={{ ...badge, ...statusStyle(item.status) }}>{item.archived ? 'ARCHIVED' : item.status.toUpperCase()}</span>
+                  <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'flex-start', gap: 3 }}>
+                    <span style={{ ...badge, ...statusStyle(item.status) }}>{item.archived ? 'ARCHIVED' : item.status.toUpperCase()}</span>
+                    {!item.archived && item.status !== 'Lost' && item.followUpDate && (
+                      <span
+                        title={item.followUpDate < todayIso() ? 'Follow up overdue' : 'Follow up date'}
+                        style={{ fontFamily: FF, fontSize: 10.5, fontWeight: 700, whiteSpace: 'nowrap', color: item.followUpDate < todayIso() ? C.red : '#a16207' }}
+                      >
+                        ⏰ {fmtShortDate(item.followUpDate)}
+                      </span>
+                    )}
+                  </div>
                 </td>
                 <td style={{ ...tdBase, padding: '8px 10px 8px 6px' }}>
                   <div style={{ display: 'flex', flexDirection: 'column', gap: 4, minWidth: 64 }}>

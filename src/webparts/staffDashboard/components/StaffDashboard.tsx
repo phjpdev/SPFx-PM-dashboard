@@ -807,14 +807,7 @@ const StaffDashboard: React.FC<IStaffDashboardProps> = ({ siteUrl, userDisplayNa
       ))}
       <div style={{ flex: 1 }} />
       <div style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
-        <label style={{ display: 'flex', alignItems: 'center', gap: 8, cursor: tdImporting ? 'wait' : 'pointer', opacity: tdImporting ? 0.6 : 1 }}
-          title="Import Time Doctor XLS">
-          <span style={{ fontFamily: 'Montserrat', fontWeight: 700, fontSize: 11, letterSpacing: '.08em', textTransform: 'uppercase', color: 'var(--t4)', whiteSpace: 'nowrap' }}>
-            {tdImporting ? 'Importing…' : 'TD Import'}
-          </span>
-          <input type="file" accept=".xls,.xlsx" style={{ display: 'none' }} onChange={handleTimeDoctorImport} disabled={tdImporting} />
-          <span style={{ fontFamily: 'Montserrat', fontWeight: 700, fontSize: 11.5, padding: '5px 12px', background: 'rgba(42,158,42,0.15)', border: '1px solid var(--3eg)', color: 'var(--3eg)', borderRadius: 5, cursor: 'pointer' }}>XLS</span>
-        </label>
+        {/* Manual TD Import hidden — hours now sync automatically from Time Doctor every night (handleTimeDoctorImport kept for emergencies) */}
         <button onClick={loadAll} disabled={loading} title="Refresh data"
           style={{ fontFamily: 'Montserrat', fontWeight: 700, fontSize: 11.5, padding: '5px 12px', background: 'rgba(42,158,42,0.15)', border: '1px solid var(--3eg)', color: 'var(--3eg)', borderRadius: 5, cursor: 'pointer', opacity: loading ? 0.6 : 1 }}>
           {loading ? '…' : '↻'}

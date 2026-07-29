@@ -2041,22 +2041,17 @@ const ManagerDashboard: React.FC<IManagerDashboardProps> = (props) => {
 
         <div style={{ flex: 1 }} />
 
-        {/* Time Doctor (manager only) */}
-        {mod === 'projects' && isManager && (
+        {/* Time Doctor auto-sync status (manual import replaced by nightly sync; modal kept for emergencies) */}
+        {mod === 'projects' && isManager && lastTdImport && (
           <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginRight: 8 }}>
-            {/* {lastTdImport && (
-              <span style={{ fontFamily: 'Montserrat', fontSize: 10, color: 'var(--t4)', whiteSpace: 'nowrap' }}>
-                Last import: {(() => { const d = new Date(lastTdImport); const days = ['Sun','Mon','Tue','Wed','Thu','Fri','Sat']; const months = ['Jan','Feb','Mar','Apr','May','Jun','Jul','Aug','Sep','Oct','Nov','Dec']; const h = d.getHours(); const ampm = h >= 12 ? 'PM' : 'AM'; const h12 = h % 12 || 12; return `${days[d.getDay()]} ${d.getDate()} ${months[d.getMonth()]}, ${h12}:${String(d.getMinutes()).padStart(2,'0')} ${ampm}`; })()}
-              </span>
-            )} */}
-            <button onClick={() => setTdModal(true)} style={{
+            <span title={`Hours sync automatically from Time Doctor every night at 00:15 AWST. Last sync: ${fmtTdImport(lastTdImport)}`} style={{
               fontFamily: 'Montserrat', fontWeight: 600, fontSize: 11, letterSpacing: '.1em',
-              textTransform: 'uppercase', padding: '5px 14px', borderRadius: 4, cursor: 'pointer',
-              background: 'rgba(212,136,10,0.14)', border: '1px solid var(--am)', color: 'var(--am)',
+              textTransform: 'uppercase', padding: '5px 14px', borderRadius: 4, cursor: 'default',
+              background: 'rgba(42,158,42,0.14)', border: '1px solid var(--gn)', color: 'var(--gn)',
               whiteSpace: 'nowrap'
             }}>
-              Time Doctor Import
-            </button>
+              TD Auto-Sync ✓ {fmtTdImport(lastTdImport.split('|')[0])}
+            </span>
           </div>
         )}
 
