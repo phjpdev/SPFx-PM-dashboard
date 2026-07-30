@@ -1127,23 +1127,30 @@ const CrmQuotesTab: React.FC<{
       }
     }
     persistQuotes(quotesRef.current.map(x => x.id === saved.id ? saved : x));
-    const withSp = await upsertQuoteToSharePoint(spService, { ...saved, spId: saved.spId ?? prev?.spId });
-    if (withSp.spId && withSp.spId !== saved.spId) {
-      setQuotes(cur => {
-        const updated = cur.map(x => x.id === withSp.id ? { ...x, spId: withSp.spId } : x);
-        quotesRef.current = updated;
-        try { localStorage.setItem(LS_QUOTES, JSON.stringify(updated)); } catch { /* ignore */ }
-        return updated;
-      });
-    }
-    if (withSp.spId) {
-      await syncQuoteAttachmentsToSharePoint(spService, withSp, attachments, prevAttachments);
-    } else {
-      setQuoteAttachments(saved.id, attachments);
-    }
-    await refreshAttachmentIndex();
-    setAttTick(t => t + 1);
+    // Close immediately — the row is already updated locally; the SharePoint
+    // upsert + attachment upload continue in the background (previously the
+    // modal stayed open until all uploads finished, or forever on an error).
     setModal(null);
+    try {
+      const withSp = await upsertQuoteToSharePoint(spService, { ...saved, spId: saved.spId ?? prev?.spId });
+      if (withSp.spId && withSp.spId !== saved.spId) {
+        setQuotes(cur => {
+          const updated = cur.map(x => x.id === withSp.id ? { ...x, spId: withSp.spId } : x);
+          quotesRef.current = updated;
+          try { localStorage.setItem(LS_QUOTES, JSON.stringify(updated)); } catch { /* ignore */ }
+          return updated;
+        });
+      }
+      if (withSp.spId) {
+        await syncQuoteAttachmentsToSharePoint(spService, withSp, attachments, prevAttachments);
+      } else {
+        setQuoteAttachments(saved.id, attachments);
+      }
+      await refreshAttachmentIndex();
+      setAttTick(t => t + 1);
+    } catch (err) {
+      console.warn('[CRM] quote background sync failed', err);
+    }
   };
 
   const markLost = (item: CrmQuote, reason: CrmLostReason): void => {
@@ -1176,20 +1183,39 @@ const CrmQuotesTab: React.FC<{
     setArchiveView(false);
   };
 
+  const wonBusyRef = React.useRef(false);
+  const [wonBusyId, setWonBusyId] = React.useState<string | null>(null);
+
   const markWon = (item: CrmQuote): void => {
+    if (wonBusyRef.current) return; // a WON/link operation is already running — ignore extra clicks
     if (!confirm(`Mark ${item.rfqNum} as WON and create a NEW project number for ${item.projectTitle || ''}?`)) return;
+    wonBusyRef.current = true;
+    setWonBusyId(item.id);
     void (async () => {
       try {
         const [crmProjects, dashProjects] = await Promise.all([
           loadProjectsFromSharePoint(spService),
           spService.loadProjects().catch(() => []),
         ]);
+        // A quote must only ever create one project — bail if one already exists
+        // (double click, second tab, or a stale row after a slow save).
+        const existing = crmProjects.find(p => p.quoteId === item.id || (!!item.quoteNum && p.quoteNum === item.quoteNum));
+        if (existing) {
+          persistQuotes(quotesRef.current.filter(q => q.id !== item.id));
+          alert(`${item.rfqNum} is already WON as ${existing.projNum} — no new project was created.`);
+          return;
+        }
         const projNum = nextProjNum(crmProjects, dashProjects);
         const iProject = quoteToIProject(item, projNum, persons, companies);
         let spId: number | undefined;
         try {
           spId = await spService.addProject(iProject);
-        } catch { /* CRM project still created if SP list unavailable */ }
+        } catch {
+          // Abort atomically: continuing here used to produce a "won" quote
+          // with no project on the dashboard (silent half-failure).
+          alert(`Could not create ${projNum} on the Projects dashboard — nothing was changed. Please try again.`);
+          return;
+        }
         const crmProject = quoteToCrmProject(item, projNum, spId);
         const nextProjects = [...crmProjects, crmProject];
         const nextQuotes = quotesRef.current.filter(q => q.id !== item.id);
@@ -1200,11 +1226,17 @@ const CrmQuotesTab: React.FC<{
         onQuoteWon?.(nextProjects, nextQuotes);
       } catch {
         alert('Could not create project. Please try again.');
+      } finally {
+        wonBusyRef.current = false;
+        setWonBusyId(null);
       }
     })();
   };
 
   const linkToProject = (item: CrmQuote, project: IProject): void => {
+    if (wonBusyRef.current) return;
+    wonBusyRef.current = true;
+    setWonBusyId(item.id);
     void (async () => {
       try {
         const crmProjects = await loadProjectsFromSharePoint(spService);
@@ -1234,6 +1266,9 @@ const CrmQuotesTab: React.FC<{
         onQuoteWon?.(nextProjects, nextQuotes);
       } catch {
         alert('Could not link project. Please try again.');
+      } finally {
+        wonBusyRef.current = false;
+        setWonBusyId(null);
       }
     })();
   };
@@ -1438,7 +1473,13 @@ const CrmQuotesTab: React.FC<{
                     )}
                     {!item.archived && item.status !== 'Lost' && (
                       <>
-                        <button onClick={() => markWon(item)} style={{ ...actionBtn, border: 'none', background: C.green, color: '#fff' }}>WON</button>
+                        <button
+                          onClick={() => markWon(item)}
+                          disabled={wonBusyId !== null}
+                          style={{ ...actionBtn, border: 'none', background: C.green, color: '#fff', opacity: wonBusyId !== null && wonBusyId !== item.id ? 0.55 : 1, cursor: wonBusyId !== null ? 'wait' : 'pointer' }}
+                        >
+                          {wonBusyId === item.id ? 'Creating…' : 'WON'}
+                        </button>
                         <button onClick={() => setLinkQuote(item)} style={{ ...actionBtn, border: 'none', background: '#0d9488', color: '#fff' }}>Link 3E</button>
                         <button onClick={() => setLostQuote(item)} style={{ ...actionBtn, border: `1px solid ${C.red}`, background: 'transparent', color: C.red }}>LOST</button>
                       </>
