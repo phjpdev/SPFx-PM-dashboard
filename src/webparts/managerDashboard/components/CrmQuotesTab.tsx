@@ -1115,6 +1115,14 @@ const CrmQuotesTab: React.FC<{
     prevAttachments: CrmAttachment[],
   ): Promise<void> => {
     let saved = normalizeQuote(item);
+    // A quote number must be unique — block the save (modal stays open to correct it).
+    const clash = quotesRef.current.find(x =>
+      x.id !== saved.id && !!saved.quoteNum &&
+      (x.quoteNum || '').trim().toUpperCase() === saved.quoteNum.trim().toUpperCase());
+    if (clash) {
+      alert(`Quote number ${saved.quoteNum} is already used by "${clash.projectTitle || clash.rfqNum}". Please use a different number.`);
+      return;
+    }
     const prev = quotesRef.current.find(x => x.id === saved.id);
     if (saved.status === 'Lost') {
       if (prev?.status !== 'Lost' || !saved.lostAt || isLegacyLostAt(saved)) {
