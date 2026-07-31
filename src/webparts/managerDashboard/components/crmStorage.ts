@@ -269,9 +269,11 @@ export function loadQuotesLocal(): CrmQuote[] {
   );
 }
 
+const normQuoteNum = (s: string | undefined): string => (s || '').trim().toUpperCase();
+
 const quoteKeysMatch = (a: CrmQuote, b: CrmQuote): boolean =>
   (!!a.id && a.id === b.id) ||
-  (!!a.quoteNum && !!b.quoteNum && a.quoteNum === b.quoteNum) ||
+  (!!normQuoteNum(a.quoteNum) && normQuoteNum(a.quoteNum) === normQuoteNum(b.quoteNum)) ||
   (!!a.rfqId && !!b.rfqId && a.rfqId === b.rfqId);
 
 const quoteRichness = (q: CrmQuote): number =>

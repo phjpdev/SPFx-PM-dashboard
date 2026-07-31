@@ -555,6 +555,15 @@ const CrmRfqTab: React.FC<{
 
   const saveRfq = (r: CrmRfq): void => {
     if (savingRfqRef.current) return;
+    // Warn when a brand-new RFQ looks like a duplicate of an existing RFQ or quote
+    // (same project title for the same company) — the user can still proceed.
+    if (!rfqsRef.current.some(x => x.id === r.id)) {
+      const t = (r.projectTitle || '').trim().toLowerCase();
+      const dupRfq = t ? rfqsRef.current.find(x => (x.projectTitle || '').trim().toLowerCase() === t && x.organizationId === r.organizationId) : undefined;
+      const dupQuote = !dupRfq && t ? quotes.find(x => (x.projectTitle || '').trim().toLowerCase() === t && x.organizationId === r.organizationId) : undefined;
+      const dup = dupRfq || dupQuote;
+      if (dup && !confirm(`"${r.projectTitle}" already exists as ${dupRfq ? dupRfq.rfqNum : dupQuote?.quoteNum} for the same company. Create it again anyway?`)) return;
+    }
     savingRfqRef.current = true;
     const saved = normalizeRfq(r);
     setRfqs(prev => {
@@ -596,9 +605,27 @@ const CrmRfqTab: React.FC<{
     }
   };
 
+  const movingQuoteRef = React.useRef(false);
+
   const confirmMoveToQuote = (rfq: CrmRfq, xeroQuoteNum: string): void => {
+    if (movingQuoteRef.current) return; // already creating a quote — ignore extra clicks
+    movingQuoteRef.current = true;
     void (async () => {
-      const quote = rfqToQuote(rfq, normalizeQuoteNum(xeroQuoteNum));
+      try {
+      const quoteNumNew = normalizeQuoteNum(xeroQuoteNum);
+      // Never create the same quote twice — verify against the server, not just
+      // this browser (double click, second tab, or a retry after a slow save).
+      const serverQuotes = await loadQuotesFromSharePoint(spService).catch(() => [] as CrmQuote[]);
+      const norm = (s: string | undefined): string => (s || '').trim().toUpperCase();
+      const clash = [...serverQuotes, ...loadQuotesLocal()].find(q =>
+        (!!q.rfqId && q.rfqId === rfq.id) ||
+        (!!norm(quoteNumNew) && norm(q.quoteNum) === norm(quoteNumNew)));
+      if (clash) {
+        alert(`${clash.quoteNum || 'A quote'} already exists for this RFQ / quote number — no duplicate was created.`);
+        setMoveQuoteRfq(null);
+        return;
+      }
+      const quote = rfqToQuote(rfq, quoteNumNew);
       copyRfqAttachmentsToQuote(rfq.id, quote.id);
 
       const savedQuote = await upsertQuoteToSharePoint(spService, quote);
@@ -631,6 +658,9 @@ const CrmRfqTab: React.FC<{
 
       await deleteRfqFromSharePoint(spService, rfq);
       onMovedToQuote?.(nextQuotes);
+      } finally {
+        movingQuoteRef.current = false;
+      }
     })();
   };
 
