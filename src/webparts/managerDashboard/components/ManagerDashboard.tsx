@@ -524,6 +524,9 @@ const ProjForm: React.FC<ProjFormProps> = ({ initial, isNew, projects, spService
         <FF label="Client PO#">
           <input style={inp} value={d.clientp0} onChange={e => set('clientp0', e.target.value)} />
         </FF>
+        <FF label="Project Address">
+          <input style={inp} value={d.projectAddress || ''} onChange={e => set('projectAddress', e.target.value)} />
+        </FF>
       </div>
 
       <SDiv label="Dates" />
@@ -761,6 +764,9 @@ const EwoForm: React.FC<EwoFormProps> = ({ initial, isNew, projects, onSave, onC
             {PROJ_STATUSES.map(s => <option key={s} value={s}>{s}</option>)}
           </select>
         </FF>
+        <FF label="Project Address">
+          <input style={inp} value={d.projectAddress || ''} onChange={e => set('projectAddress', e.target.value)} />
+        </FF>
       </div>
 
       <SDiv label="Dates" />
@@ -849,6 +855,7 @@ const ProjDetail: React.FC<ProjDetailProps> = ({ proj, rfis, isManager, onEdit, 
       {rowItem('Project #', proj.projNum, true)}
       {rowItem('Quote #', proj.quoteNum)}
       {rowItem('Name', proj.name)}
+      {rowItem('Address', proj.projectAddress || '—')}
       {rowItem('Company', proj.company)}
       {rowItem('Contact', proj.contact)}
       {rowItem('Email', proj.email)}

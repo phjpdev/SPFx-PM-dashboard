@@ -11,6 +11,8 @@ export interface IProject {
   spId?: number;
   projNum: string;
   name: string;
+  /** Site/project address — carried over from the CRM quote when won. */
+  projectAddress?: string;
   discipline: string;
   status: string;
   year: number;

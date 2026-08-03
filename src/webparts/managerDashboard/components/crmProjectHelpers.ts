@@ -75,6 +75,7 @@ export const quoteToIProject = (
     id: projNum,
     projNum,
     name: q.projectTitle,
+    projectAddress: q.projectAddress || '',
     discipline,
     status: 'Active',
     year: new Date().getFullYear(),
