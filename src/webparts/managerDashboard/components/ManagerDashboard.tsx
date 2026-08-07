@@ -1323,13 +1323,20 @@ const fmtTdImport = (raw: string): string => {
   return who ? `${ts} by ${who}` : ts;
 };
 
-/** Compact "7 Aug, 9:25 pm" for the header chip, where space is tight. */
+/** Compact "7 Aug, 9:25 pm" — used inside tooltip sentences. */
 const fmtTdShort = (iso: string): string => {
   const d = new Date(iso);
   if (isNaN(d.getTime())) return iso;
   return new Intl.DateTimeFormat('en-AU', {
     timeZone: 'Australia/Sydney', day: 'numeric', month: 'short', hour: 'numeric', minute: '2-digit', hour12: true
   }).format(d);
+};
+
+/** Just "7 Aug" — the header chip has room for little more. Time lives in the tooltip. */
+const fmtTdDay = (iso: string): string => {
+  const d = new Date(iso);
+  if (isNaN(d.getTime())) return '';
+  return new Intl.DateTimeFormat('en-AU', { timeZone: 'Australia/Sydney', day: 'numeric', month: 'short' }).format(d);
 };
 
 /** Counts written by the nightly sync into 3Edge_Settings/tdSyncReport. */
@@ -1358,10 +1365,12 @@ type TdTone = 'ok' | 'warn' | 'bad';
  * bucket is legitimately unmatched every single night. It is shown in the
  * tooltip instead.
  */
-const tdBadge = (lastImport: string, reportRaw: string | null): { tone: TdTone; label: string; title: string } => {
+const tdBadge = (lastImport: string, reportRaw: string | null): { tone: TdTone; status: string; when: string; title: string } => {
   const [iso, ...rest] = lastImport.split('|');
   const who = rest.join('|') || 'unknown';
-  const stamp = fmtTdShort(iso);
+  // Split rather than one string: the header renders `status` unshrinkable and lets
+  // `when` ellipsise away, so a narrow window loses the date but never the state.
+  const when = fmtTdDay(iso);
   const ranAt = Date.parse(iso);
   const lines = [`Last run: ${fmtTdImport(lastImport)}`];
 
@@ -1377,10 +1386,10 @@ const tdBadge = (lastImport: string, reportRaw: string | null): { tone: TdTone; 
   // Montserrat as shipped has no glyph for U+2713 or U+26A0 — both map to .notdef,
   // so they render from a fallback face or as tofu. Colour carries the state; these
   // are ASCII reinforcement.
-  const bad = (why: string): { tone: TdTone; label: string; title: string } =>
-    ({ tone: 'bad', label: `TD Sync ! ${stamp}`, title: lines.concat(why).join('\n') });
-  const warn = (why: string, prefix = 'TD Sync ~'): { tone: TdTone; label: string; title: string } =>
-    ({ tone: 'warn', label: `${prefix} ${stamp}`, title: lines.concat(why).join('\n') });
+  const bad = (why: string): { tone: TdTone; status: string; when: string; title: string } =>
+    ({ tone: 'bad', status: 'TD Sync !', when, title: lines.concat(why).join('\n') });
+  const warn = (why: string, status = 'TD Sync ~'): { tone: TdTone; status: string; when: string; title: string } =>
+    ({ tone: 'warn', status, when, title: lines.concat(why).join('\n') });
 
   if (isNaN(ranAt)) return bad('Last-run timestamp is unreadable.');
   const staleH = (Date.now() - ranAt) / 3600000;
@@ -1406,7 +1415,7 @@ const tdBadge = (lastImport: string, reportRaw: string | null): { tone: TdTone; 
   // not correct — but a genuine shutdown week looks the same, so warn, never fail.
   if (rep.entries === 0) return warn('The last run found no Time Doctor activity at all — hours have not moved.');
   if ((rep.warnings ?? 0) > 0) return warn(`${rep.warnings} warning(s) — some projects were skipped.`);
-  return { tone: 'ok', label: `TD Sync OK ${stamp}`, title: lines.join('\n') };
+  return { tone: 'ok', status: 'TD Sync OK', when, title: lines.join('\n') };
 };
 
 /**
@@ -2238,12 +2247,19 @@ const ManagerDashboard: React.FC<IManagerDashboardProps> = (props) => {
               <span
                 title={`Hours sync from Time Doctor nightly at 00:15 AWST, covering complete days only — today's hours appear after tonight's run.\n\n${b.title}`}
                 style={{
+                  display: 'inline-flex', alignItems: 'baseline', minWidth: 0,
                   fontFamily: 'Montserrat', fontWeight: 600, fontSize: 11, letterSpacing: '.08em',
                   textTransform: 'uppercase', padding: '5px 12px', borderRadius: 4, cursor: 'default',
                   background: bg, border: `1px solid ${col}`, color: col,
-                  whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis', maxWidth: '100%'
+                  whiteSpace: 'nowrap', overflow: 'hidden', maxWidth: '100%'
                 }}>
-                {b.label}
+                {/* The state must survive any width — only the date is allowed to go. */}
+                <span style={{ flexShrink: 0 }}>{b.status}</span>
+                {b.when && (
+                  <span style={{ flexShrink: 1, minWidth: 0, overflow: 'hidden', textOverflow: 'ellipsis', opacity: 0.85, marginLeft: 6 }}>
+                    · {b.when}
+                  </span>
+                )}
               </span>
             </div>
           );
