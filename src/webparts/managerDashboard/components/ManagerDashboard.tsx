@@ -561,7 +561,15 @@ const ProjForm: React.FC<ProjFormProps> = ({ initial, isNew, projects, spService
           <input style={inp} type="number" step="0.5" value={d.hrsAllowed} onChange={e => set('hrsAllowed', Number(e.target.value))} />
         </FF>
         <FF label="Hours Used">
-          <input style={inp} type="number" step="0.5" value={d.hrsUsed} onChange={e => set('hrsUsed', Number(e.target.value))} />
+          {/* Read-only: the nightly Time Doctor sync owns this field and recomputes
+              it as hrsBaseline + logged hours, so anything typed here is discarded. */}
+          <input
+            style={{ ...inp, opacity: 0.65, cursor: 'not-allowed' }}
+            type="number"
+            value={d.hrsUsed}
+            readOnly
+            title="Synced nightly from Time Doctor — not editable here."
+          />
         </FF>
         <FF label="RFIs Allowed" required>
           <input style={inp} type="number" value={d.rfisAllowed} onChange={e => set('rfisAllowed', Number(e.target.value))} />
@@ -792,7 +800,17 @@ const EwoForm: React.FC<EwoFormProps> = ({ initial, isNew, projects, onSave, onC
           <input style={inp} type="number" value={d.hrsAllowed} onChange={e => set('hrsAllowed', Number(e.target.value))} />
         </FF>
         <FF label="Hours Used">
-          <input style={inp} type="number" value={d.hrsUsed} onChange={e => set('hrsUsed', Number(e.target.value))} />
+          {/* Editable, unlike a project's. An EWO's projNum is "3E-531-EWO-001",
+              which never equals the "3e-531" code the sync matches on, and the sync
+              skips isEwo rows anyway — so hand entry is the only source EWO hours
+              have. */}
+          <input
+            style={inp}
+            type="number"
+            value={d.hrsUsed}
+            onChange={e => set('hrsUsed', Number(e.target.value))}
+            title="EWO hours are entered by hand — the nightly Time Doctor sync does not track EWOs."
+          />
         </FF>
         <FF label="Detailers">
           <input style={inp} value={d.detailers} onChange={e => set('detailers', e.target.value)} placeholder="Comma-separated" />
@@ -1305,6 +1323,128 @@ const fmtTdImport = (raw: string): string => {
   return who ? `${ts} by ${who}` : ts;
 };
 
+/** Compact "7 Aug, 9:25 pm" for the header chip, where space is tight. */
+const fmtTdShort = (iso: string): string => {
+  const d = new Date(iso);
+  if (isNaN(d.getTime())) return iso;
+  return new Intl.DateTimeFormat('en-AU', {
+    timeZone: 'Australia/Sydney', day: 'numeric', month: 'short', hour: 'numeric', minute: '2-digit', hour12: true
+  }).format(d);
+};
+
+/** Counts written by the nightly sync into 3Edge_Settings/tdSyncReport. */
+interface TdSyncReport {
+  at?: string;
+  entries?: number;
+  matched?: number;
+  unmatched?: number;
+  warnings?: number;
+  errors?: number;
+  updates?: { timelogCreated?: number; timelogUpdated?: number; projectsPatched?: number };
+}
+
+type TdTone = 'ok' | 'warn' | 'bad';
+
+/**
+ * Real health of the nightly Time Doctor sync.
+ *
+ * The chip used to be hard-coded green off `lastTdImport` alone, which only
+ * proves the job STARTED. It stayed green through eight consecutive nights where
+ * the sync ran but could not record its result, so nobody noticed. Green now
+ * requires a report that is present, readable, recent, no older than the run it
+ * describes, and error-free.
+ *
+ * `unmatched` is deliberately not an alarm — the "00 - Non Production Tasks"
+ * bucket is legitimately unmatched every single night. It is shown in the
+ * tooltip instead.
+ */
+const tdBadge = (lastImport: string, reportRaw: string | null): { tone: TdTone; label: string; title: string } => {
+  const [iso, ...rest] = lastImport.split('|');
+  const who = rest.join('|') || 'unknown';
+  const stamp = fmtTdShort(iso);
+  const ranAt = Date.parse(iso);
+  const lines = [`Last run: ${fmtTdImport(lastImport)}`];
+
+  let rep: TdSyncReport | null = null;
+  if (reportRaw) { try { rep = JSON.parse(reportRaw) as TdSyncReport; } catch (_e) { rep = null; } }
+  if (rep) {
+    lines.push(`Entries ${rep.entries ?? '?'} · matched ${rep.matched ?? '?'} · unmatched ${rep.unmatched ?? '?'}`);
+    lines.push(`Warnings ${rep.warnings ?? 0} · errors ${rep.errors ?? 0}`);
+    if (rep.updates) {
+      lines.push(`Wrote ${rep.updates.timelogCreated ?? 0} new / ${rep.updates.timelogUpdated ?? 0} updated log rows, patched ${rep.updates.projectsPatched ?? 0} project(s)`);
+    }
+  }
+  // Montserrat as shipped has no glyph for U+2713 or U+26A0 — both map to .notdef,
+  // so they render from a fallback face or as tofu. Colour carries the state; these
+  // are ASCII reinforcement.
+  const bad = (why: string): { tone: TdTone; label: string; title: string } =>
+    ({ tone: 'bad', label: `TD Sync ! ${stamp}`, title: lines.concat(why).join('\n') });
+  const warn = (why: string, prefix = 'TD Sync ~'): { tone: TdTone; label: string; title: string } =>
+    ({ tone: 'warn', label: `${prefix} ${stamp}`, title: lines.concat(why).join('\n') });
+
+  if (isNaN(ranAt)) return bad('Last-run timestamp is unreadable.');
+  const staleH = (Date.now() - ranAt) / 3600000;
+
+  // A manual XLS import or an hours reset writes lastTdImport but no report — flag
+  // it rather than letting it masquerade as a healthy automatic run.
+  if (who !== 'Auto (Time Doctor)') {
+    if (staleH > 36) return bad(`Last change was a manual edit by ${who}, and the nightly sync has not run since.`);
+    return warn(`Set by hand (${who}), not the nightly sync. Tonight's run will recompute these hours.`, 'TD Manual');
+  }
+  if (!reportRaw) return bad('No sync report found — the run cannot confirm it succeeded.');
+  if (!rep) return bad('Sync report is unreadable.');
+
+  const repAt = rep.at ? Date.parse(rep.at) : NaN;
+  if (isNaN(repAt)) return bad('Sync report has no valid timestamp.');
+  // One minute of slack: both settings rows are written from the same instant, in
+  // separate try blocks, so either one failing on its own shows up as a mismatch.
+  if (repAt < ranAt - 60000) return bad(`Report (${fmtTdShort(rep.at as string)}) is older than the run — the sync ran but could not record its result.`);
+  if (repAt > ranAt + 60000) return bad(`Report (${fmtTdShort(rep.at as string)}) is newer than the run stamp — the sync could not record when it last ran.`);
+  if (staleH > 36) return bad('No sync in over 36 hours.');
+  if ((rep.errors ?? 0) > 0) return bad(`${rep.errors} error(s) in the last run.`);
+  // A run that pulled nothing writes a clean, error-free report. Hours are frozen,
+  // not correct — but a genuine shutdown week looks the same, so warn, never fail.
+  if (rep.entries === 0) return warn('The last run found no Time Doctor activity at all — hours have not moved.');
+  if ((rep.warnings ?? 0) > 0) return warn(`${rep.warnings} warning(s) — some projects were skipped.`);
+  return { tone: 'ok', label: `TD Sync OK ${stamp}`, title: lines.join('\n') };
+};
+
+/**
+ * A 3E project code anywhere in a Time Doctor project name. Tolerates "3E531",
+ * "3E - 531" and en/em-dash variants; `\d{3,}` keeps incidental text ("Bay 3 E 12")
+ * from reading as a code. Mirrors PROJ_CODE_RE in 3edge-tdsync/src/sync.js.
+ */
+const PROJ_CODE_RE = /\b3\s*e\s*[-‐-―_]?\s*(\d{3,})\b/i;
+
+/**
+ * Match a Time Doctor project name to a dashboard project.
+ *
+ * Ranked, not OR-ed — mirrors matchProject() in 3edge-tdsync/src/sync.js so the
+ * manual import and the nightly sync always agree. A 3E code in the TD name is
+ * authoritative: it beats any name similarity, and if it names no project the row
+ * is left unmatched rather than guessed onto a lookalike. Name matching applies
+ * only when there is no code, and only when it is unambiguous.
+ */
+const matchTdProject = (tdName: string, projects: IProject[]): IProject | undefined => {
+  const projNumMatch = tdName.match(PROJ_CODE_RE);
+  if (projNumMatch) {
+    const code = `3e-${projNumMatch[1]}`;
+    const exact = projects.filter(p => (p.projNum || '').trim().toLowerCase().replace(/\s+/g, '') === code);
+    return exact.find(p => !p.isEwo) || exact[0];
+  }
+  const td = tdName.trim().toLowerCase();
+  const named = projects.filter(p => {
+    const name = (p.name || '').trim().toLowerCase();
+    // Very short names match far too much to be trusted on their own.
+    if (name.length < 5 || !(p.projNum || '').trim()) return false;
+    return td.indexOf(name) >= 0 || name.indexOf(td) >= 0;
+  });
+  const nonEwo = named.filter(p => !p.isEwo);
+  if (nonEwo.length === 1) return nonEwo[0];
+  if (named.length === 1) return named[0];
+  return undefined;
+};
+
 // ── Time Doctor Import Modal ───────────────────────────────────────────────────
 interface TdImportModalProps {
   projects: IProject[];
@@ -1386,14 +1526,8 @@ const TdImportModal: React.FC<TdImportModalProps> = ({ projects, onClose, onAppl
         // Match aggregated projects to dashboard projects
         const updates: TdPreviewRow[] = [];
         for (const [xlsName, totalHrs] of Object.entries(aggMap)) {
-          // Extract 3E-XXX pattern from project name like "01 - 3E-500 SAMPLE TASK"
-          const projNumMatch = xlsName.match(/3E-\d+/i);
-          const match = projects.find(p => {
-            if (projNumMatch && p.projNum.toLowerCase() === projNumMatch[0].toLowerCase()) return true;
-            if (p.name && xlsName.toLowerCase().indexOf(p.name.toLowerCase()) >= 0) return true;
-            if (p.name && p.name.toLowerCase().indexOf(xlsName.toLowerCase()) >= 0) return true;
-            return false;
-          });
+          // Matches on the 3E-XXX code in names like "01 - 3E-500 SAMPLE TASK".
+          const match = matchTdProject(xlsName, projects);
           if (match) {
             const existing = updates.find(u => u.projId === match.id);
             if (existing) { existing.hrsUsed += totalHrs; }
@@ -1469,6 +1603,12 @@ const TdImportModal: React.FC<TdImportModalProps> = ({ projects, onClose, onAppl
                 </tbody>
               </table>
             </div>
+            <div style={{ fontFamily: 'Montserrat', fontSize: 11.5, lineHeight: 1.5, color: 'var(--am)', background: 'var(--am2)', border: '1px solid var(--am)', borderRadius: 6, padding: '8px 12px', marginBottom: 12 }}>
+              Hours are maintained automatically by the nightly Time Doctor sync
+              (hours already worked + hours logged since). Anything applied here is a
+              temporary override — tonight&apos;s 00:15 AWST run will recalculate it.
+              Use this only when the automatic sync is unavailable.
+            </div>
             <div style={{ display: 'flex', gap: 10 }}>
               <BtnPrimary onClick={() => onApply(preview.map(u => ({ projId: u.projId, hrsUsed: u.current + u.hrsUsed })))}>
                 APPLY UPDATES
@@ -1479,7 +1619,15 @@ const TdImportModal: React.FC<TdImportModalProps> = ({ projects, onClose, onAppl
         )}
         {!parsed && (
           <div style={{ display: 'flex', justifyContent: 'flex-end', gap: 10, marginTop: 8 }}>
-            <button onClick={() => { if (confirm('Reset ALL project hours to 0? This cannot be undone.')) onResetHours(); }} style={{ fontFamily: 'Montserrat', fontSize: 12.5, padding: '9px 18px', background: 'var(--rd)', border: 'none', color: '#fff', borderRadius: 7, cursor: 'pointer', fontWeight: 700 }}>Reset All Hours</button>
+            <button onClick={() => {
+              const typed = prompt('This zeroes Hours Used on EVERY project.\n\nThe nightly Time Doctor sync will restore hours for any project it tracks, so this mainly affects projects it does not. EWOs are left alone.\n\nType RESET to confirm.');
+              if (typed === null) return;                       // cancelled — say nothing
+              if (typed.trim().toUpperCase() !== 'RESET') {      // typo must not look like success
+                setError('Hours were NOT reset — you need to type RESET exactly.');
+                return;
+              }
+              onResetHours();
+            }} style={{ fontFamily: 'Montserrat', fontSize: 12.5, padding: '9px 18px', background: 'var(--rd)', border: 'none', color: '#fff', borderRadius: 7, cursor: 'pointer', fontWeight: 700 }}>Reset All Hours</button>
             <button onClick={onClose} style={{ fontFamily: 'Montserrat', fontSize: 12.5, padding: '9px 18px', background: 'transparent', border: '1px solid var(--bd)', color: 'var(--t2)', borderRadius: 7, cursor: 'pointer' }}>Close</button>
           </div>
         )}
@@ -1575,6 +1723,10 @@ const ManagerDashboard: React.FC<IManagerDashboardProps> = (props) => {
   // ── Time Doctor
   const [tdModal, setTdModal] = React.useState(false);
   const [lastTdImport, setLastTdImport] = React.useState<string | null>(null);
+  // undefined = not read yet / read failed, null = read succeeded and there is no
+  // report. getSetting returns undefined for both a missing key AND a thrown
+  // request, so conflating them would paint the chip red on any transient 429.
+  const [tdReport, setTdReport] = React.useState<string | null | undefined>(undefined);
 
   // ── Load data
   const loadData = React.useCallback(async () => {
@@ -1590,8 +1742,18 @@ const ManagerDashboard: React.FC<IManagerDashboardProps> = (props) => {
       setRfis(r);
       setTeamMembers(tm);
       setSpMode('live');
-      // Load last TD import timestamp
-      spService.current.getSetting('lastTdImport').then(v => { if (v) setLastTdImport(v); }).catch(() => undefined);
+      // Both rows are needed: lastTdImport says the sync RAN, tdSyncReport says
+      // whether it SUCCEEDED. The chip is only green when they agree. Settle them
+      // together — React 17 does not batch separate .then callbacks, so resolving
+      // them independently guarantees a render with one set and the other not,
+      // which would flash the chip red on every load.
+      Promise.all([
+        spService.current.getSetting('lastTdImport'),
+        spService.current.getSetting('tdSyncReport'),
+      ]).then(([impRaw, repRaw]) => {
+        if (impRaw) setLastTdImport(impRaw);
+        setTdReport(repRaw === undefined ? undefined : (repRaw || null));
+      }).catch(() => undefined);
     } catch (e) {
       const msg = (e instanceof Error) ? e.message : String(e);
       toast('SharePoint unavailable — running in local mode. (' + msg + ')', 'error');
@@ -1810,6 +1972,11 @@ const ManagerDashboard: React.FC<IManagerDashboardProps> = (props) => {
         if (!payload.spId) throw new Error('No spId on project');
         spId = payload.spId;
         await spService.current.updateProject(payload.spId, payload);
+        // pBody deliberately omits hrsUsed so the sync owns it — but the sync never
+        // touches EWOs, so this is the only path that can persist their hours.
+        if (payload.isEwo) {
+          await spService.current.updateProjectHours(payload.spId, Number(payload.hrsUsed) || 0);
+        }
         setProjects(prevList => prevList.map(p => p.id === payload.id ? { ...payload } : p));
         toast('Project saved.');
       }
@@ -1941,7 +2108,9 @@ const ManagerDashboard: React.FC<IManagerDashboardProps> = (props) => {
       if (!p || !p.spId) continue;
       try {
         const updated: IProject = { ...p, hrsUsed: u.hrsUsed };
-        await spService.current.updateProject(p.spId, updated);
+        // Hours-only write: must not carry the rest of this browser's copy of the
+        // project, which may be minutes or hours out of date.
+        await spService.current.updateProjectHours(p.spId, u.hrsUsed);
         setProjects(prev => prev.map(x => x.id === u.projId ? updated : x));
         success++;
       } catch (e) {
@@ -1959,17 +2128,25 @@ const ManagerDashboard: React.FC<IManagerDashboardProps> = (props) => {
     setTdModal(false);
     let success = 0;
     for (const p of projects) {
+      // Projects are safe to zero — tonight's run recomputes them from Time Doctor.
+      // EWO hours are hand-entered and nothing would ever restore them.
+      if (p.isEwo) continue;
       if (!p.spId || p.hrsUsed === 0) continue;
       try {
         const updated: IProject = { ...p, hrsUsed: 0 };
-        await spService.current.updateProject(p.spId, updated);
+        await spService.current.updateProjectHours(p.spId, 0);
         setProjects(prev => prev.map(x => x.id === p.id ? updated : x));
         success++;
       } catch (e) {
         toast('Failed to reset ' + p.projNum + ': ' + ((e instanceof Error) ? e.message : String(e)), 'error');
       }
     }
-    toast('Reset hours: ' + success + ' project' + (success !== 1 ? 's' : '') + ' set to 0.');
+    // Hand-set hours are not the sync's work — stamp provenance so the header chip
+    // reports "Manual" rather than certifying these numbers as synced.
+    const resetStamp = new Date().toISOString() + '|' + (props.userDisplayName || 'manual reset');
+    spService.current.setSetting('lastTdImport', resetStamp).catch(() => undefined);
+    setLastTdImport(resetStamp);
+    toast('Reset hours: ' + success + ' project' + (success !== 1 ? 's' : '') + ' set to 0. EWOs were left alone.');
   };
 
   // ── Years for filter
@@ -2019,7 +2196,7 @@ const ManagerDashboard: React.FC<IManagerDashboardProps> = (props) => {
       {/* ── Header ─────────────────────────────────────────────── */}
       <header style={headerBg}>
         {/* Logo */}
-        <div style={{ display: 'flex', alignItems: 'center', gap: 10, marginRight: 22 }}>
+        <div style={{ display: 'flex', alignItems: 'center', gap: 10, marginRight: 22, flexShrink: 0 }}>
           {IMG_LOGO_DASH
             ? <img src={IMG_LOGO_DASH} alt="3 Edge" style={{ height: 84 }} />
             : (
@@ -2032,11 +2209,12 @@ const ManagerDashboard: React.FC<IManagerDashboardProps> = (props) => {
         </div>
 
         {/* Nav Tabs */}
-        <div style={{ display: 'flex', gap: 2 }}>
+        <div style={{ display: 'flex', gap: 2, flexShrink: 0 }}>
           {(['projects', 'rfis', 'ewos', 'tasks', 'checklist', 'crm'] as Mod[]).map((m: Mod) => (
             <button key={m} onClick={() => setMod(m)} style={{
               fontFamily: 'Montserrat', fontWeight: 700, fontSize: 11, letterSpacing: '.12em',
               textTransform: 'uppercase', padding: '6px 16px', borderRadius: 4, cursor: 'pointer',
+              whiteSpace: 'nowrap', flexShrink: 0,
               background: mod === m ? 'var(--3eg3)' : 'transparent',
               border: mod === m ? '1px solid var(--3eg)' : '1px solid transparent',
               color: mod === m ? 'var(--3eg)' : '#8a9bb0', transition: 'all .15s'
@@ -2048,22 +2226,31 @@ const ManagerDashboard: React.FC<IManagerDashboardProps> = (props) => {
 
         <div style={{ flex: 1 }} />
 
-        {/* Time Doctor auto-sync status (manual import replaced by nightly sync; modal kept for emergencies) */}
-        {mod === 'projects' && isManager && lastTdImport && (
-          <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginRight: 8 }}>
-            <span title={`Hours sync automatically from Time Doctor every night at 00:15 AWST. Last sync: ${fmtTdImport(lastTdImport)}`} style={{
-              fontFamily: 'Montserrat', fontWeight: 600, fontSize: 11, letterSpacing: '.1em',
-              textTransform: 'uppercase', padding: '5px 14px', borderRadius: 4, cursor: 'default',
-              background: 'rgba(42,158,42,0.14)', border: '1px solid var(--gn)', color: 'var(--gn)',
-              whiteSpace: 'nowrap'
-            }}>
-              TD Auto-Sync ✓ {fmtTdImport(lastTdImport.split('|')[0])}
-            </span>
-          </div>
-        )}
+        {/* Time Doctor sync health. Colour is derived, never hard-coded — see tdBadge.
+            This is the only shrinkable item in the header, so when space runs out it
+            ellipsises instead of squashing the controls to its right. */}
+        {mod === 'projects' && isManager && lastTdImport && tdReport !== undefined && (() => {
+          const b = tdBadge(lastTdImport, tdReport);
+          const col = b.tone === 'ok' ? 'var(--gn)' : b.tone === 'warn' ? 'var(--am)' : 'var(--rd)';
+          const bg = b.tone === 'ok' ? 'var(--gn2)' : b.tone === 'warn' ? 'var(--am2)' : 'var(--rd2)';
+          return (
+            <div style={{ display: 'flex', alignItems: 'center', marginRight: 10, minWidth: 0, flexShrink: 1, overflow: 'hidden' }}>
+              <span
+                title={`Hours sync from Time Doctor nightly at 00:15 AWST, covering complete days only — today's hours appear after tonight's run.\n\n${b.title}`}
+                style={{
+                  fontFamily: 'Montserrat', fontWeight: 600, fontSize: 11, letterSpacing: '.08em',
+                  textTransform: 'uppercase', padding: '5px 12px', borderRadius: 4, cursor: 'default',
+                  background: bg, border: `1px solid ${col}`, color: col,
+                  whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis', maxWidth: '100%'
+                }}>
+                {b.label}
+              </span>
+            </div>
+          );
+        })()}
 
         {/* SP Status indicator */}
-        <div style={{ display: 'flex', alignItems: 'center', gap: 5, marginRight: 14 }}>
+        <div style={{ display: 'flex', alignItems: 'center', gap: 5, marginRight: 14, flexShrink: 0 }}>
           <div style={{
             width: 8, height: 8, borderRadius: '50%',
             background: spMode === 'live' ? 'var(--gn)' : spMode === 'local' ? 'var(--am)' : '#5a6a80',
@@ -2076,13 +2263,17 @@ const ManagerDashboard: React.FC<IManagerDashboardProps> = (props) => {
           )}
         </div>
 
-        {/* Role toggle — only visible for Owners */}
+        {/* Role toggle — only visible for Owners.
+            flexShrink: 0 is load-bearing. Without it the header squeezed this to
+            zero width and all you saw was a green sliver: the active button's
+            background with its label crushed out of existence. */}
         {userRole === 'owner' && (
-          <div style={{ display: 'flex', border: '1px solid rgba(138,155,176,.3)', borderRadius: 4, overflow: 'hidden', marginRight: 14 }}>
+          <div style={{ display: 'flex', border: '1px solid rgba(138,155,176,.3)', borderRadius: 4, overflow: 'hidden', marginRight: 14, flexShrink: 0 }}>
             {(['manager', 'staff'] as Role[]).map(r => (
               <button key={r} onClick={() => setRole(r)} style={{
                 fontFamily: 'Montserrat', fontWeight: 700, fontSize: 10.5, letterSpacing: '.1em',
                 textTransform: 'uppercase', padding: '4px 12px', cursor: 'pointer', border: 'none',
+                whiteSpace: 'nowrap', flexShrink: 0,
                 background: role === r ? (r === 'manager' ? 'var(--3eg)' : 'rgba(90,106,128,0.25)') : 'transparent',
                 color: role === r ? (r === 'manager' ? '#111418' : '#fff') : '#8a9bb0',
                 transition: 'all .15s'
@@ -2094,7 +2285,7 @@ const ManagerDashboard: React.FC<IManagerDashboardProps> = (props) => {
         )}
 
         {/* Clock + user */}
-        <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'flex-end', whiteSpace: 'nowrap', gap: 2 }}>
+        <div className={styles.hdrClock} style={{ display: 'flex', flexDirection: 'column', alignItems: 'flex-end', whiteSpace: 'nowrap', gap: 2, flexShrink: 0 }}>
           <div style={{ fontFamily: 'Montserrat', fontWeight: 600, fontSize: 11, color: '#8a9bb0' }}>
             <span style={{ color: '#5a7a9a', marginRight: 4 }}>AUS</span>{clock.aus}
           </div>
@@ -2103,7 +2294,7 @@ const ManagerDashboard: React.FC<IManagerDashboardProps> = (props) => {
           </div>
         </div>
         {props.userDisplayName && (
-          <div style={{ fontFamily: 'Montserrat', fontWeight: 600, fontSize: 11, color: '#8a9bb0', marginLeft: 12, whiteSpace: 'nowrap' }}>{props.userDisplayName}</div>
+          <div className={styles.hdrUser} title={props.userDisplayName} style={{ fontFamily: 'Montserrat', fontWeight: 600, fontSize: 11, color: '#8a9bb0', marginLeft: 12, whiteSpace: 'nowrap', flexShrink: 0, maxWidth: 150, overflow: 'hidden', textOverflow: 'ellipsis' }}>{props.userDisplayName}</div>
         )}
       </header>
 
