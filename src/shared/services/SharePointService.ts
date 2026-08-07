@@ -219,7 +219,11 @@ export class SharePointService {
       status: d.status || 'Active',
       year: Number(d.year) || new Date().getFullYear(),
       hrsAllowed: Number(d.hrsAllowed) || 0,
-      hrsUsed: Number(d.hrsUsed) || 0,
+      // hrsUsed is deliberately NOT here. The nightly Time Doctor sync owns it
+      // (hrsUsed = hrsBaseline + sum of 3Edge_TimeLog), and spMerge is a partial
+      // update, so leaving it out means an ordinary project save can no longer
+      // write a stale browser copy over what the sync computed. The only writers
+      // are addProject (explicit initial value) and updateProjectHours.
       rfisAllowed: Number(d.rfisAllowed) || 0,
       quoteNum: d.quoteNum || '',
       contact: d.contact || '',
@@ -246,13 +250,25 @@ export class SharePointService {
   }
 
   public async addProject(d: IProject): Promise<number> {
-    const r = await this.spPost(`/_api/web/lists/getbytitle('${LIST_PROJ}')/items`, this.pBody(d));
+    // New rows still get an explicit starting figure; only updates leave it alone.
+    const r = await this.spPost(`/_api/web/lists/getbytitle('${LIST_PROJ}')/items`, { ...this.pBody(d), hrsUsed: Number(d.hrsUsed) || 0 });
     if (!r || !r.Id) throw new Error('No Id returned');
     return r.Id;
   }
 
   public async updateProject(spId: number, d: IProject): Promise<void> {
     await this.spMerge(`/_api/web/lists/getbytitle('${LIST_PROJ}')/items(${spId})`, this.pBody(d));
+  }
+
+  /**
+   * The only client-side writer of hrsUsed. Kept separate from updateProject so
+   * that saving a project cannot touch hours by accident.
+   *
+   * Note the nightly sync recomputes hrsUsed from hrsBaseline + 3Edge_TimeLog, so
+   * a value written here is an override that the next run will replace.
+   */
+  public async updateProjectHours(spId: number, hrsUsed: number): Promise<void> {
+    await this.spMerge(`/_api/web/lists/getbytitle('${LIST_PROJ}')/items(${spId})`, { hrsUsed: Number(hrsUsed) || 0 });
   }
 
   public async deleteProject(spId: number): Promise<void> {

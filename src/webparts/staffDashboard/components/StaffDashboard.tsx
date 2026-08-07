@@ -38,6 +38,12 @@ const inp = (val: string | number, onChange: (v: string) => void, type = 'text',
     style={{ fontFamily: 'Montserrat', fontSize: 13, padding: '8px 10px', border: '1px solid var(--bd)', borderRadius: 2, background: 'var(--s2)', color: 'var(--t1)', width: '100%', outline: 'none' }} />
 );
 
+/** Same look as inp(), but for fields the nightly Time Doctor sync owns. */
+const inpReadOnly = (val: string | number, title: string): JSX.Element => (
+  <input type="number" value={val} readOnly title={title}
+    style={{ fontFamily: 'Montserrat', fontSize: 13, padding: '8px 10px', border: '1px solid var(--bd)', borderRadius: 2, background: 'var(--s2)', color: 'var(--t1)', width: '100%', outline: 'none', opacity: 0.65, cursor: 'not-allowed' }} />
+);
+
 const sel = (val: string, onChange: (v: string) => void, opts: string[]): JSX.Element => (
   <select value={val} onChange={e => onChange(e.target.value)}
     style={{ fontFamily: 'Montserrat', fontSize: 13, padding: '8px 10px', border: '1px solid var(--bd)', borderRadius: 2, background: 'var(--s2)', color: 'var(--t1)', width: '100%', outline: 'none', cursor: 'pointer' }}>
@@ -415,12 +421,21 @@ const StaffDashboard: React.FC<IStaffDashboardProps> = ({ siteUrl, userDisplayNa
         for (const [pNum, hrs] of Object.entries(agg)) {
           const proj = projects.find(p => p.projNum === pNum);
           if (proj && proj.spId) {
-            const updated_proj = { ...proj, hrsUsed: parseFloat((proj.hrsUsed + hrs).toFixed(2)) };
-            await svc.updateProject(proj.spId, updated_proj);
+            const newHrs = parseFloat((proj.hrsUsed + hrs).toFixed(2));
+            // Hours-only write. updateProject no longer carries hrsUsed, and sending
+            // this whole stale copy would overwrite fields edited elsewhere.
+            await svc.updateProjectHours(proj.spId, newHrs);
             updated++;
           } else {
             notFound.push(pNum);
           }
+        }
+
+        if (updated > 0) {
+          // Stamp provenance so the manager dashboard's sync chip reports these as a
+          // hand import rather than certifying them as synced.
+          const stamp = new Date().toISOString() + '|' + (userDisplayName || 'manual import');
+          await svc.setSetting('lastTdImport', stamp).catch(() => undefined);
         }
 
         await loadAll();
@@ -579,7 +594,7 @@ const StaffDashboard: React.FC<IStaffDashboardProps> = ({ siteUrl, userDisplayNa
         <FF label="Status">{sel(fp.status, set('status'), PROJ_STATUSES)}</FF>
         <FF label="Year">{inp(fp.year, set('year'), 'number')}</FF>
         <FF label="Hrs Allowed">{inp(fp.hrsAllowed, setNum('hrsAllowed'), 'number')}</FF>
-        <FF label="Hrs Used">{inp(fp.hrsUsed, setNum('hrsUsed'), 'number')}</FF>
+        <FF label="Hrs Used">{inpReadOnly(fp.hrsUsed, 'Synced nightly from Time Doctor — not editable here.')}</FF>
         <FF label="RFIs Allowed">{inp(fp.rfisAllowed, setNum('rfisAllowed'), 'number')}</FF>
         <FF label="Quote Number">{inp(fp.quoteNum, set('quoteNum'))}</FF>
         <FF label="Contact">{inp(fp.contact, set('contact'))}</FF>

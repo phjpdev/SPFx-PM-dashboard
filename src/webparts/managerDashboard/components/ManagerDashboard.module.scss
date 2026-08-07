@@ -105,3 +105,24 @@
     filter: brightness(0.97);
   }
 }
+
+/*
+ * Header overflow relief.
+ *
+ * .dashboardRoot is overflow:hidden, so anything the header pushes past the right
+ * edge is clipped with no scrollbar — it just silently disappears. Every header
+ * item is flexShrink:0 (the role toggle used to collapse to a green sliver without
+ * it), so below roughly 1130px the only thing left to give is these two. Shed the
+ * decorative items first so the controls stay reachable. Matters most when the web
+ * part sits on a page with a left nav eating ~220px.
+ *
+ * !important is required: both elements carry `display` as an inline style, which
+ * would otherwise outrank a class rule.
+ */
+.hdrClock {
+  @media (max-width: 1200px) { display: none !important; }
+}
+
+.hdrUser {
+  @media (max-width: 1080px) { display: none !important; }
+}
