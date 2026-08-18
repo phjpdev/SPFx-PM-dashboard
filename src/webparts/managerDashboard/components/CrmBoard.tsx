@@ -536,15 +536,210 @@ const ViewModalFooter: React.FC<{
 );
 
 // ── Person Modal ──────────────────────────────────────────────────
+/**
+ * Strip the noise that makes "Indecon", "Indecon Pty Ltd" and "INDECON GROUP"
+ * look like three different companies to a plain string compare.
+ */
+const normalizeCompanyName = (s: string): string =>
+  s.toLowerCase()
+    .replace(/&/g, ' and ')
+    .replace(/[^a-z0-9]+/g, ' ')
+    .replace(/\b(pty|ltd|limited|inc|incorporated|co|company|group|holdings|australia|aust|the)\b/g, ' ')
+    .replace(/\s+/g, ' ')
+    .trim();
+
+/**
+ * An existing company that a typed name probably duplicates. Matches on the
+ * normalised form, or on containment when the shorter side is long enough that the
+ * overlap cannot be a coincidence ("Synergy Eng" vs "Synergy Engineering").
+ */
+const findSimilarCompany = (name: string, companies: CrmCompany[]): CrmCompany | undefined => {
+  const n = normalizeCompanyName(name);
+  if (n.length < 3) return undefined;
+  return companies.find(c => {
+    const cn = normalizeCompanyName(c.name);
+    if (!cn) return false;
+    if (cn === n) return true;
+    const [short, long] = cn.length < n.length ? [cn, n] : [n, cn];
+    return short.length >= 4 && long.indexOf(short) >= 0;
+  });
+};
+
+/**
+ * Company field that can create as you type.
+ *
+ * Adding a contact used to mean two trips: create the company on the Companies
+ * tab, come back, then pick it from a dropdown. Here you type instead — matches
+ * appear as you go, and if there is no match you can create the company inline and
+ * save both records together. The two records stay separate underneath, which
+ * matters because plenty of companies have several contacts (Synergy Engineering
+ * has eleven) and a merged row would store their address once per person.
+ */
+const CompanyPicker: React.FC<{
+  companies: CrmCompany[];
+  value: string;
+  readOnly?: boolean;
+  onChange: (organizationId: string) => void;
+  onCreate: (company: CrmCompany) => void;
+}> = ({ companies, value, readOnly, onChange, onCreate }) => {
+  const selected = companies.find(c => c.id === value);
+  const [query, setQuery] = React.useState('');
+  const [open, setOpen] = React.useState(false);
+  const [creating, setCreating] = React.useState(false);
+  const [draftAddress, setDraftAddress] = React.useState('');
+  const [draftPhone, setDraftPhone] = React.useState('');
+  const [dupAck, setDupAck] = React.useState(false);
+  const wrapRef = React.useRef<HTMLDivElement>(null);
+
+  // Close on any click outside the field — a blur handler would fire before the
+  // dropdown's own onClick and swallow the selection.
+  React.useEffect(() => {
+    if (!open) return undefined;
+    const onDocDown = (e: MouseEvent): void => {
+      if (wrapRef.current && !wrapRef.current.contains(e.target as Node)) {
+        setOpen(false); setCreating(false); setQuery('');
+      }
+    };
+    document.addEventListener('mousedown', onDocDown);
+    return () => document.removeEventListener('mousedown', onDocDown);
+  }, [open]);
+
+  const trimmed = query.trim();
+  const matches = React.useMemo(() => {
+    if (!trimmed) return companies.slice(0, 8);
+    const q = trimmed.toLowerCase();
+    return companies.filter(c => c.name.toLowerCase().indexOf(q) >= 0).slice(0, 8);
+  }, [companies, trimmed]);
+  const exactExists = companies.some(c => c.name.trim().toLowerCase() === trimmed.toLowerCase());
+  const similar = creating && !dupAck ? findSimilarCompany(trimmed, companies) : undefined;
+
+  const reset = (): void => { setOpen(false); setCreating(false); setQuery(''); setDraftAddress(''); setDraftPhone(''); setDupAck(false); };
+
+  const pick = (id: string): void => { onChange(id); reset(); };
+
+  const commitCreate = (): void => {
+    if (!trimmed) return;
+    const company: CrmCompany = {
+      id: uid(),
+      name: trimmed,
+      labels: '',
+      address: draftAddress.trim(),
+      phones: draftPhone.trim() ? [{ value: draftPhone.trim(), type: 'Work' }] : [{ value: '', type: 'Work' }],
+      emails: [{ value: '', type: 'Work' }],
+    };
+    onCreate(company);   // parent persists it and adds it to `companies`
+    onChange(company.id);
+    reset();
+  };
+
+  if (readOnly) {
+    return <input value={selected ? selected.name : ''} readOnly disabled style={{ ...mi, opacity: 1 }} placeholder="— None —" />;
+  }
+
+  const itemStyle: React.CSSProperties = {
+    padding: '7px 10px', fontFamily: FF, fontSize: 12.5, color: C.text,
+    cursor: 'pointer', borderBottom: `1px solid ${C.border}`, background: C.surface,
+  };
+
+  return (
+    <div ref={wrapRef} style={{ position: 'relative' }}>
+      <input
+        value={open ? query : (selected ? selected.name : '')}
+        placeholder="Type to search or add a company…"
+        onFocus={() => { setOpen(true); setQuery(''); }}
+        onChange={e => { setQuery(e.target.value); setOpen(true); setCreating(false); setDupAck(false); }}
+        style={{ ...mi, paddingLeft: 28 }}
+      />
+      {selected && !open && (
+        <button
+          type="button"
+          title="Clear company"
+          onClick={() => { onChange(''); reset(); }}
+          style={{ position: 'absolute', right: 6, top: '50%', transform: 'translateY(-50%)', background: 'transparent', border: 'none', color: C.muted, cursor: 'pointer', fontSize: 14, lineHeight: 1, padding: 4 }}
+        >×</button>
+      )}
+
+      {open && (
+        <div style={{ position: 'absolute', zIndex: 30, top: '100%', left: 0, right: 0, marginTop: 3, background: C.surface, border: `1px solid ${C.borderMd}`, borderRadius: 4, boxShadow: '0 6px 18px rgba(0,0,0,.12)', maxHeight: 300, overflowY: 'auto' }}>
+          {!creating && (
+            <>
+              <div style={{ ...itemStyle, color: C.muted }} onClick={() => pick('')}>— None —</div>
+              {matches.map(c => (
+                <div key={c.id} style={itemStyle} onClick={() => pick(c.id)}>
+                  <div style={{ fontWeight: 600 }}>{c.name}</div>
+                  {c.address && <div style={{ fontSize: 11, color: C.muted, marginTop: 2 }}>{c.address}</div>}
+                </div>
+              ))}
+              {trimmed && matches.length === 0 && (
+                <div style={{ ...itemStyle, color: C.muted, cursor: 'default' }}>No company matches “{trimmed}”.</div>
+              )}
+              {trimmed && !exactExists && (
+                <div
+                  style={{ ...itemStyle, color: C.green, fontWeight: 700, borderBottom: 'none' }}
+                  onClick={() => setCreating(true)}
+                >+ Create new company “{trimmed}”</div>
+              )}
+            </>
+          )}
+
+          {creating && (
+            <div style={{ padding: 12 }}>
+              <div style={{ fontFamily: FF, fontSize: 12.5, fontWeight: 700, color: C.text, marginBottom: 10 }}>
+                New company: {trimmed}
+              </div>
+
+              {similar && (
+                <div style={{ fontFamily: FF, fontSize: 11.5, lineHeight: 1.5, color: '#8a6d0b', background: 'rgba(212,136,10,.10)', border: '1px solid rgba(212,136,10,.5)', borderRadius: 5, padding: '8px 10px', marginBottom: 10 }}>
+                  <strong>{similar.name}</strong> already exists — is that the same company?
+                  <div style={{ display: 'flex', gap: 8, marginTop: 8 }}>
+                    <button type="button" onClick={() => pick(similar.id)} style={{ fontFamily: FF, fontSize: 11.5, fontWeight: 700, padding: '5px 10px', borderRadius: 4, border: 'none', background: C.green, color: '#fff', cursor: 'pointer' }}>
+                      Use {similar.name}
+                    </button>
+                    <button type="button" onClick={() => setDupAck(true)} style={{ fontFamily: FF, fontSize: 11.5, padding: '5px 10px', borderRadius: 4, border: `1px solid ${C.borderMd}`, background: 'transparent', color: C.sub, cursor: 'pointer' }}>
+                      No, create separately
+                    </button>
+                  </div>
+                </div>
+              )}
+
+              {!similar && (
+                <>
+                  <label style={ml}>Address (optional)</label>
+                  <input value={draftAddress} onChange={e => setDraftAddress(e.target.value)} style={{ ...mi, marginBottom: 10 }} placeholder="Street, suburb, state" autoFocus />
+                  <label style={ml}>Phone (optional)</label>
+                  <input value={draftPhone} onChange={e => setDraftPhone(e.target.value)} style={{ ...mi, marginBottom: 12 }} placeholder="+61 …" />
+                  <div style={{ display: 'flex', gap: 8 }}>
+                    <button type="button" onClick={commitCreate} style={{ fontFamily: FF, fontSize: 12, fontWeight: 700, padding: '7px 14px', borderRadius: 4, border: 'none', background: C.green, color: '#fff', cursor: 'pointer' }}>
+                      Create &amp; link
+                    </button>
+                    <button type="button" onClick={() => { setCreating(false); setDupAck(false); }} style={{ fontFamily: FF, fontSize: 12, padding: '7px 14px', borderRadius: 4, border: `1px solid ${C.borderMd}`, background: 'transparent', color: C.sub, cursor: 'pointer' }}>
+                      Back
+                    </button>
+                  </div>
+                  <div style={{ fontFamily: FF, fontSize: 11, color: C.muted, marginTop: 8 }}>
+                    You can fill in the rest later on the Companies tab.
+                  </div>
+                </>
+              )}
+            </div>
+          )}
+        </div>
+      )}
+    </div>
+  );
+};
+
 const PersonModal: React.FC<{
   initial: CrmPerson;
   companies: CrmCompany[];
   isNew?: boolean;
   openInView?: boolean;
   onSave: (p: CrmPerson) => void;
+  /** Persists a company created inline from the Company field. */
+  onCreateCompany: (c: CrmCompany) => void;
   onDelete?: (id: string) => void;
   onClose: () => void;
-}> = ({ initial, companies, isNew = false, openInView = false, onSave, onDelete, onClose }) => {
+}> = ({ initial, companies, isNew = false, openInView = false, onSave, onCreateCompany, onDelete, onClose }) => {
   const [editing, setEditing] = React.useState(isNew || !openInView);
   const [d, setD] = React.useState<CrmPerson>(() => normalizePerson(initial));
   const snapshotRef = React.useRef<CrmPerson>(normalizePerson(initial));
@@ -657,10 +852,13 @@ const PersonModal: React.FC<{
               <span style={{ position: 'absolute', left: 9, top: '50%', transform: 'translateY(-50%)', color: C.muted, pointerEvents: 'none' }}>
                 <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><rect x="2" y="7" width="20" height="14" rx="2"/><path d="M16 7V5a2 2 0 0 0-4 0v2"/></svg>
               </span>
-              <select value={d.organizationId} disabled={readOnly} onChange={e => set('organizationId', e.target.value)} style={{ ...mi, paddingLeft: 28, opacity: readOnly ? 1 : undefined }}>
-                <option value="">— None —</option>
-                {companies.map(c => <option key={c.id} value={c.id}>{c.name}</option>)}
-              </select>
+              <CompanyPicker
+                companies={companies}
+                value={d.organizationId}
+                readOnly={readOnly}
+                onChange={id => set('organizationId', id)}
+                onCreate={onCreateCompany}
+              />
             </div>
           </div>
           <div style={{ marginBottom: 14 }}>
@@ -895,9 +1093,11 @@ const CompanyModal: React.FC<{
   isNew?: boolean;
   openInView?: boolean;
   onSave: (c: CrmCompany) => void;
+  /** Opens a blank person already linked to this company. */
+  onAddContact?: (companyId: string) => void;
   onDelete?: (id: string) => void;
   onClose: () => void;
-}> = ({ initial, isNew = false, openInView = false, onSave, onDelete, onClose }) => {
+}> = ({ initial, isNew = false, openInView = false, onSave, onAddContact, onDelete, onClose }) => {
   const [editing, setEditing] = React.useState(isNew || !openInView);
   const [d, setD] = React.useState<CrmCompany>(initial);
   const snapshotRef = React.useRef<CrmCompany>(initial);
@@ -954,6 +1154,16 @@ const CompanyModal: React.FC<{
       <MultiField items={d.phones} types={PHONE_TYPES} addLabel="phone" placeholder="Phone number" isPhone readOnly={readOnly} onChange={v => set('phones', v)} />
       <label style={ml}>Email</label>
       <MultiField items={d.emails} types={EMAIL_TYPES} addLabel="email" placeholder="Email address" readOnly={readOnly} onChange={v => set('emails', v)} />
+      {/* The other half of one-step entry: adding the 2nd..11th contact at a company
+          you already have. Hidden while editing so unsaved changes cannot be lost
+          when this swaps modals. */}
+      {!isNew && !editing && onAddContact && (
+        <button
+          type="button"
+          onClick={() => onAddContact(d.id)}
+          style={{ fontFamily: FF, fontSize: 11.5, fontWeight: 600, padding: '7px 14px', marginTop: 14, background: 'transparent', border: `1px dashed ${C.greenBd}`, color: C.green, borderRadius: 5, cursor: 'pointer' }}
+        >+ Add contact at {d.name || 'this company'}</button>
+      )}
       <ViewModalFooter
         editing={editing}
         isNew={isNew}
@@ -1598,6 +1808,7 @@ const CrmBoard: React.FC<CrmBoardProps> = ({ spService }) => {
           isNew={personModal.isNew}
           openInView={personModal.openInView}
           onSave={savePerson}
+          onCreateCompany={saveCompany}
           onDelete={deletePerson}
           onClose={() => setPersonModal(null)}
         />
@@ -1608,6 +1819,10 @@ const CrmBoard: React.FC<CrmBoardProps> = ({ spService }) => {
           isNew={companyModal.isNew}
           openInView={companyModal.openInView}
           onSave={saveCompany}
+          onAddContact={companyId => {
+            setCompanyModal(null);
+            setPersonModal({ person: { ...emptyPerson(), organizationId: companyId }, isNew: true, openInView: false });
+          }}
           onDelete={deleteCompany}
           onClose={() => setCompanyModal(null)}
         />
