@@ -585,9 +585,8 @@ const CompanyPicker: React.FC<{
   const selected = companies.find(c => c.id === value);
   const [query, setQuery] = React.useState('');
   const [open, setOpen] = React.useState(false);
-  const [creating, setCreating] = React.useState(false);
-  const [draftAddress, setDraftAddress] = React.useState('');
-  const [draftPhone, setDraftPhone] = React.useState('');
+  /** Non-null while the inline create panel is open — it holds the whole company. */
+  const [draft, setDraft] = React.useState<CrmCompany | null>(null);
   const [dupAck, setDupAck] = React.useState(false);
   const wrapRef = React.useRef<HTMLDivElement>(null);
 
@@ -597,7 +596,7 @@ const CompanyPicker: React.FC<{
     if (!open) return undefined;
     const onDocDown = (e: MouseEvent): void => {
       if (wrapRef.current && !wrapRef.current.contains(e.target as Node)) {
-        setOpen(false); setCreating(false); setQuery('');
+        setOpen(false); setDraft(null); setQuery('');
       }
     };
     document.addEventListener('mousedown', onDocDown);
@@ -605,28 +604,30 @@ const CompanyPicker: React.FC<{
   }, [open]);
 
   const trimmed = query.trim();
+  // Every company, alphabetical — with 512 of them the list has to be browsable,
+  // not just searchable, so there is no cap here; the dropdown scrolls instead.
+  const sorted = React.useMemo(
+    () => companies.slice().sort((a, b) => a.name.localeCompare(b.name)),
+    [companies],   // sort once, not on every keystroke
+  );
   const matches = React.useMemo(() => {
-    if (!trimmed) return companies.slice(0, 8);
     const q = trimmed.toLowerCase();
-    return companies.filter(c => c.name.toLowerCase().indexOf(q) >= 0).slice(0, 8);
-  }, [companies, trimmed]);
+    return q ? sorted.filter(c => c.name.toLowerCase().indexOf(q) >= 0) : sorted;
+  }, [sorted, trimmed]);
   const exactExists = companies.some(c => c.name.trim().toLowerCase() === trimmed.toLowerCase());
-  const similar = creating && !dupAck ? findSimilarCompany(trimmed, companies) : undefined;
+  // Re-checked against the draft name, so editing it in the panel re-runs the guard.
+  const similar = draft && !dupAck ? findSimilarCompany(draft.name, companies) : undefined;
 
-  const reset = (): void => { setOpen(false); setCreating(false); setQuery(''); setDraftAddress(''); setDraftPhone(''); setDupAck(false); };
+  const reset = (): void => { setOpen(false); setDraft(null); setQuery(''); setDupAck(false); };
 
   const pick = (id: string): void => { onChange(id); reset(); };
 
+  const setDraftField = <K extends keyof CrmCompany>(k: K, v: CrmCompany[K]): void =>
+    setDraft(p => (p ? { ...p, [k]: v } : p));
+
   const commitCreate = (): void => {
-    if (!trimmed) return;
-    const company: CrmCompany = {
-      id: uid(),
-      name: trimmed,
-      labels: '',
-      address: draftAddress.trim(),
-      phones: draftPhone.trim() ? [{ value: draftPhone.trim(), type: 'Work' }] : [{ value: '', type: 'Work' }],
-      emails: [{ value: '', type: 'Work' }],
-    };
+    if (!draft || !draft.name.trim()) return;
+    const company: CrmCompany = { ...draft, name: draft.name.trim(), address: draft.address.trim() };
     onCreate(company);   // parent persists it and adds it to `companies`
     onChange(company.id);
     reset();
@@ -647,7 +648,7 @@ const CompanyPicker: React.FC<{
         value={open ? query : (selected ? selected.name : '')}
         placeholder="Type to search or add a company…"
         onFocus={() => { setOpen(true); setQuery(''); }}
-        onChange={e => { setQuery(e.target.value); setOpen(true); setCreating(false); setDupAck(false); }}
+        onChange={e => { setQuery(e.target.value); setOpen(true); setDraft(null); setDupAck(false); }}
         style={{ ...mi, paddingLeft: 28 }}
       />
       {selected && !open && (
@@ -660,10 +661,13 @@ const CompanyPicker: React.FC<{
       )}
 
       {open && (
-        <div style={{ position: 'absolute', zIndex: 30, top: '100%', left: 0, right: 0, marginTop: 3, background: C.surface, border: `1px solid ${C.borderMd}`, borderRadius: 4, boxShadow: '0 6px 18px rgba(0,0,0,.12)', maxHeight: 300, overflowY: 'auto' }}>
-          {!creating && (
+        <div style={{ position: 'absolute', zIndex: 30, top: '100%', left: 0, right: 0, marginTop: 3, background: C.surface, border: `1px solid ${C.borderMd}`, borderRadius: 4, boxShadow: '0 6px 18px rgba(0,0,0,.12)', maxHeight: 420, overflowY: 'auto' }}>
+          {!draft && (
             <>
-              <div style={{ ...itemStyle, color: C.muted }} onClick={() => pick('')}>— None —</div>
+              <div style={{ ...itemStyle, color: C.muted, position: 'sticky', top: 0 }} onClick={() => pick('')}>
+                — None —
+                <span style={{ float: 'right', fontSize: 11 }}>{matches.length} compan{matches.length === 1 ? 'y' : 'ies'}</span>
+              </div>
               {matches.map(c => (
                 <div key={c.id} style={itemStyle} onClick={() => pick(c.id)}>
                   <div style={{ fontWeight: 600 }}>{c.name}</div>
@@ -675,17 +679,17 @@ const CompanyPicker: React.FC<{
               )}
               {trimmed && !exactExists && (
                 <div
-                  style={{ ...itemStyle, color: C.green, fontWeight: 700, borderBottom: 'none' }}
-                  onClick={() => setCreating(true)}
+                  style={{ ...itemStyle, color: C.green, fontWeight: 700, borderBottom: 'none', position: 'sticky', bottom: 0 }}
+                  onClick={() => { setDraft({ ...emptyCompany(), name: trimmed }); setDupAck(false); }}
                 >+ Create new company “{trimmed}”</div>
               )}
             </>
           )}
 
-          {creating && (
+          {draft && (
             <div style={{ padding: 12 }}>
               <div style={{ fontFamily: FF, fontSize: 12.5, fontWeight: 700, color: C.text, marginBottom: 10 }}>
-                New company: {trimmed}
+                New company
               </div>
 
               {similar && (
@@ -702,25 +706,32 @@ const CompanyPicker: React.FC<{
                 </div>
               )}
 
-              {!similar && (
-                <>
-                  <label style={ml}>Address (optional)</label>
-                  <input value={draftAddress} onChange={e => setDraftAddress(e.target.value)} style={{ ...mi, marginBottom: 10 }} placeholder="Street, suburb, state" autoFocus />
-                  <label style={ml}>Phone (optional)</label>
-                  <input value={draftPhone} onChange={e => setDraftPhone(e.target.value)} style={{ ...mi, marginBottom: 12 }} placeholder="+61 …" />
-                  <div style={{ display: 'flex', gap: 8 }}>
-                    <button type="button" onClick={commitCreate} style={{ fontFamily: FF, fontSize: 12, fontWeight: 700, padding: '7px 14px', borderRadius: 4, border: 'none', background: C.green, color: '#fff', cursor: 'pointer' }}>
-                      Create &amp; link
-                    </button>
-                    <button type="button" onClick={() => { setCreating(false); setDupAck(false); }} style={{ fontFamily: FF, fontSize: 12, padding: '7px 14px', borderRadius: 4, border: `1px solid ${C.borderMd}`, background: 'transparent', color: C.sub, cursor: 'pointer' }}>
-                      Back
-                    </button>
-                  </div>
-                  <div style={{ fontFamily: FF, fontSize: 11, color: C.muted, marginTop: 8 }}>
-                    You can fill in the rest later on the Companies tab.
-                  </div>
-                </>
-              )}
+              {/* Same fields as the Companies tab, so nothing has to be filled in twice. */}
+              <div style={{ marginBottom: 14 }}>
+                <label style={ml}>Name</label>
+                <input value={draft.name} onChange={e => { setDraftField('name', e.target.value); setDupAck(false); }} style={mi} placeholder="Company name" autoFocus />
+              </div>
+              <div style={{ marginBottom: 14 }}>
+                <label style={ml}>Labels</label>
+                <input value={draft.labels} onChange={e => setDraftField('labels', e.target.value)} style={mi} placeholder="e.g. Client, Supplier, Partner" />
+              </div>
+              <div style={{ marginBottom: 14 }}>
+                <label style={ml}>Address</label>
+                <AddressSearch value={draft.address} onChange={v => setDraftField('address', v)} />
+              </div>
+              <label style={ml}>Phone</label>
+              <MultiField items={draft.phones} types={PHONE_TYPES} addLabel="phone" placeholder="Phone number" isPhone onChange={v => setDraftField('phones', v)} />
+              <label style={ml}>Email</label>
+              <MultiField items={draft.emails} types={EMAIL_TYPES} addLabel="email" placeholder="Email address" onChange={v => setDraftField('emails', v)} />
+
+              <div style={{ display: 'flex', gap: 8, marginTop: 4 }}>
+                <button type="button" onClick={commitCreate} disabled={!draft.name.trim() || !!similar} style={{ fontFamily: FF, fontSize: 12, fontWeight: 700, padding: '7px 14px', borderRadius: 4, border: 'none', background: C.green, color: '#fff', cursor: (!draft.name.trim() || similar) ? 'not-allowed' : 'pointer', opacity: (!draft.name.trim() || similar) ? 0.45 : 1 }}>
+                  Create &amp; link
+                </button>
+                <button type="button" onClick={() => { setDraft(null); setDupAck(false); }} style={{ fontFamily: FF, fontSize: 12, padding: '7px 14px', borderRadius: 4, border: `1px solid ${C.borderMd}`, background: 'transparent', color: C.sub, cursor: 'pointer' }}>
+                  Back
+                </button>
+              </div>
             </div>
           )}
         </div>
