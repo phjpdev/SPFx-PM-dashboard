@@ -578,7 +578,7 @@ const ProjForm: React.FC<ProjFormProps> = ({ initial, isNew, projects, spService
 
       <SDiv label="Notes" />
       <FF label="Project Notes">
-        <textarea style={{ ...inp, minHeight: 70, resize: 'vertical' }} value={d.notes} onChange={e => set('notes', e.target.value)} placeholder="Add notes..." />
+        <textarea style={{ ...inp, minHeight: 170, resize: 'vertical', lineHeight: 1.5 }} value={d.notes} onChange={e => set('notes', e.target.value)} placeholder="Add notes..." />
       </FF>
       <FF label="Note Attachments (images / screenshots)">
         <div>
