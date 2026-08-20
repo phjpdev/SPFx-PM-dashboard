@@ -301,12 +301,16 @@ const LinkProjectModal: React.FC<{
   /** projNum -> the won-project record holding it, so the list can say who owns it. */
   const [linkedByProjNum, setLinkedByProjNum] = React.useState<Map<string, CrmProject>>(new Map());
   const [loading, setLoading] = React.useState(true);
+  const [loadError, setLoadError] = React.useState('');
+  const [reloadTick, setReloadTick] = React.useState(0);
   const [search, setSearch] = React.useState('');
   const [selected, setSelected] = React.useState('');
 
   React.useEffect(() => {
     let cancelled = false;
     void (async () => {
+      setLoading(true);
+      setLoadError('');
       try {
         const [dash, crm] = await Promise.all([
           spService.loadProjects(),
@@ -317,12 +321,16 @@ const LinkProjectModal: React.FC<{
         crm.forEach(p => linked.set(p.projNum, p));
         setLinkedByProjNum(linked);
         setProjects(dash.filter(p => !p.isEwo).sort((a, b) => a.projNum.localeCompare(b.projNum, undefined, { numeric: true })));
+      } catch (e) {
+        // Without this the rejection was swallowed and the empty list rendered as
+        // "No projects match your search" — a load failure that read as no data.
+        if (!cancelled) setLoadError(e instanceof Error ? e.message : String(e));
       } finally {
         if (!cancelled) setLoading(false);
       }
     })();
     return () => { cancelled = true; };
-  }, [spService]);
+  }, [spService, reloadTick]);
 
   const q = search.toLowerCase().trim();
   const options = projects.filter(p => {
@@ -350,6 +358,16 @@ const LinkProjectModal: React.FC<{
           </p>
           {loading ? (
             <p style={{ fontFamily: FF, fontSize: 12, color: C.muted }}>Loading projects…</p>
+          ) : loadError ? (
+            <div style={{ fontFamily: FF, fontSize: 12, lineHeight: 1.5, color: C.red, background: 'rgba(192,57,43,.08)', border: `1px solid ${C.red}`, borderRadius: 6, padding: '10px 12px' }}>
+              <strong>Could not load projects.</strong>
+              <div style={{ marginTop: 4, color: C.sub }}>{loadError}</div>
+              <button
+                type="button"
+                onClick={() => setReloadTick(t => t + 1)}
+                style={{ marginTop: 10, fontFamily: FF, fontSize: 12, fontWeight: 700, padding: '6px 14px', borderRadius: 4, border: 'none', background: C.green, color: '#fff', cursor: 'pointer' }}
+              >Try again</button>
+            </div>
           ) : (
             <>
               <label style={ml}>Search project</label>
@@ -380,7 +398,9 @@ const LinkProjectModal: React.FC<{
               </select>
               {options.length === 0 && !loading && (
                 <p style={{ fontFamily: FF, fontSize: 11, color: C.muted, marginTop: 8 }}>
-                  No projects match your search.
+                  {projects.length === 0
+                    ? 'No projects were returned from SharePoint.'
+                    : 'No projects match your search.'}
                 </p>
               )}
             </>
