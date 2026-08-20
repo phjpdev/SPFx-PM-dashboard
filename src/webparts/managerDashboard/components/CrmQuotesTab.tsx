@@ -80,6 +80,24 @@ const quoteNumFilled = (v: string): boolean => {
   return t.length > 0 && t !== 'QU-';
 };
 
+/**
+ * Comparable form of a quote number: "QU-422", "QU-0422" and "qu-422" are the
+ * same quote. Dashboard projects store them unpadded while the CRM pads them, so
+ * comparing the two sides raw makes an existing link look like a different one.
+ */
+const quoteKey = (v: string): string => {
+  const raw = String(v || '').trim().toUpperCase().replace(/\s+/g, '');
+  const m = raw.match(/^QU-?0*(\d+)$/);
+  return m ? `QU-${m[1]}` : raw;
+};
+
+/** True when a won-project record came from this exact quote. */
+const wipMatchesQuote = (wip: { quoteId?: string; quoteNum?: string }, q: CrmQuote): boolean =>
+  // Prefer the id, but fall back to the number: a quote that was re-created after
+  // being linked keeps its number and gets a new id.
+  (!!wip.quoteId && wip.quoteId === q.id) ||
+  (!!wip.quoteNum && !!q.quoteNum && quoteKey(wip.quoteNum) === quoteKey(q.quoteNum));
+
 const csvCell = (v: string | number): string => {
   const s = String(v ?? '');
   return /[",\n]/.test(s) ? `"${s.replace(/"/g, '""')}"` : s;
@@ -280,7 +298,8 @@ const LinkProjectModal: React.FC<{
   onClose: () => void;
 }> = ({ quote, spService, onConfirm, onClose }) => {
   const [projects, setProjects] = React.useState<IProject[]>([]);
-  const [linkedProjNums, setLinkedProjNums] = React.useState<Set<string>>(new Set());
+  /** projNum -> the won-project record holding it, so the list can say who owns it. */
+  const [linkedByProjNum, setLinkedByProjNum] = React.useState<Map<string, CrmProject>>(new Map());
   const [loading, setLoading] = React.useState(true);
   const [search, setSearch] = React.useState('');
   const [selected, setSelected] = React.useState('');
@@ -294,8 +313,9 @@ const LinkProjectModal: React.FC<{
           loadProjectsFromSharePoint(spService),
         ]);
         if (cancelled) return;
-        const linked = new Set(crm.map(p => p.projNum));
-        setLinkedProjNums(linked);
+        const linked = new Map<string, CrmProject>();
+        crm.forEach(p => linked.set(p.projNum, p));
+        setLinkedByProjNum(linked);
         setProjects(dash.filter(p => !p.isEwo).sort((a, b) => a.projNum.localeCompare(b.projNum, undefined, { numeric: true })));
       } finally {
         if (!cancelled) setLoading(false);
@@ -342,11 +362,21 @@ const LinkProjectModal: React.FC<{
               <label style={ml}>3E project number</label>
               <select value={selected} onChange={e => setSelected(e.target.value)} style={mi}>
                 <option value="">— Select project —</option>
-                {options.map(p => (
-                  <option key={p.projNum} value={p.projNum}>
-                    {p.projNum} — {p.name}{p.company ? ` (${p.company})` : ''}{p.quoteNum ? ` · ${p.quoteNum}` : ''}{linkedProjNums.has(p.projNum) ? ' · already in CRM' : ''}
-                  </option>
-                ))}
+                {options.map(p => {
+                  const owner = linkedByProjNum.get(p.projNum);
+                  // "already in CRM" hid the one fact that matters: whether it is
+                  // this quote holding it (safe to finish) or a different one.
+                  const note = !owner
+                    ? ''
+                    : wipMatchesQuote(owner, quote)
+                      ? ' · already linked to this quote'
+                      : ` · taken by ${owner.quoteNum || 'another quote'}`;
+                  return (
+                    <option key={p.projNum} value={p.projNum}>
+                      {p.projNum} — {p.name}{p.company ? ` (${p.company})` : ''}{p.quoteNum ? ` · ${p.quoteNum}` : ''}{note}
+                    </option>
+                  );
+                })}
               </select>
               {options.length === 0 && !loading && (
                 <p style={{ fontFamily: FF, fontSize: 11, color: C.muted, marginTop: 8 }}>
@@ -1248,8 +1278,34 @@ const CrmQuotesTab: React.FC<{
     void (async () => {
       try {
         const crmProjects = await loadProjectsFromSharePoint(spService);
-        if (crmProjects.some(p => p.projNum === project.projNum)) {
-          alert(`${project.projNum} is already linked in CRM.`);
+        const existing = crmProjects.find(p => p.projNum === project.projNum);
+        if (existing && !wipMatchesQuote(existing, item)) {
+          // Genuine conflict: a different quote owns this project number. Name it,
+          // so there is something to act on.
+          alert(
+            `${project.projNum} is already linked to ${existing.quoteNum || 'another quote'}`
+            + `${existing.projectTitle ? ` — ${existing.projectTitle}` : ''}.\n\n`
+            + 'Unlink that one first if you need to relink this quote.',
+          );
+          return;
+        }
+        if (existing) {
+          // Already linked to THIS quote. The won-project record exists and only the
+          // Quotes list is out of step — a link that half-completed, writing the WIP
+          // row but never clearing the quote. Finish the tidy-up instead of dead-
+          // ending, otherwise the quote can never leave the Quotes tab and every
+          // retry hits the same message.
+          const tidied = quotesRef.current.filter(q => q.id !== item.id);
+          persistQuotes(tidied);
+          if (project.spId && item.quoteNum && !project.quoteNum) {
+            try {
+              await spService.updateProject(project.spId, { ...project, quoteNum: item.quoteNum });
+            } catch { /* dashboard quote # optional */ }
+          }
+          setWonProjects(crmProjects);
+          setLinkQuote(null);
+          onQuoteWon?.(crmProjects, tidied);
+          alert(`${project.projNum} was already linked to ${item.quoteNum || 'this quote'}. Removed the leftover quote entry — nothing else changed.`);
           return;
         }
         const wonDate = project.startDate && /^\d{4}-\d{2}-\d{2}/.test(project.startDate)
