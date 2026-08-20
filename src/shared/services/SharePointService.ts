@@ -80,14 +80,24 @@ export class SharePointService {
     return this._digest;
   }
 
-  private async spGet(path: string): Promise<any> { // eslint-disable-line @typescript-eslint/no-explicit-any
+  private async spGet(path: string, attempt = 0): Promise<any> { // eslint-disable-line @typescript-eslint/no-explicit-any
     const r = await fetch(this._siteUrl + path, {
       credentials: 'include',
       headers: { Accept: 'application/json;odata=nometadata' }
     });
     if (!r.ok) {
+      // Writes (spPost/spMerge) have always retried a throttle; reads did not, so a
+      // few minutes of SharePoint throttling failed every load in the app at once —
+      // and callers that treat an error as "no rows" then showed it as empty data.
+      if ((r.status === 429 || r.status === 503) && attempt < 3) {
+        const retryAfter = Number(r.headers.get('Retry-After') || '5');
+        const wait = Math.min(Math.max(isNaN(retryAfter) ? 5 : retryAfter, 2), 20) * 1000;
+        await new Promise<void>(resolve => setTimeout(resolve, wait));
+        return this.spGet(path, attempt + 1);
+      }
       let msg = 'HTTP ' + r.status;
       try { const e = await r.json(); const em = e.error?.message; msg = (typeof em === 'object' && em?.value) ? em.value : (em || e.error?.code || msg); } catch (_x) { /* ignore */ }
+      if (r.status === 429 || r.status === 503) msg = `SharePoint is rate limiting requests (HTTP ${r.status}). Wait a minute and try again.`;
       throw new Error(msg);
     }
     return r.json();
