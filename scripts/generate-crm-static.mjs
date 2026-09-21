@@ -11,8 +11,11 @@ const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const root = path.join(__dirname, '..');
 const outDir = path.join(root, 'src/webparts/managerDashboard/data');
 
-const ORG_FILE = path.join(root, 'organizations-export.xlsx');
-const PEOPLE_FILE = path.join(root, 'people-export.xlsx');
+// The exports hold live contact data and are not kept in the repo — pass the
+// paths in, or drop the files at the defaults below.
+//   node scripts/generate-crm-static.mjs <organizations.xlsx> <people.xlsx>
+const ORG_FILE = path.resolve(process.argv[2] || path.join(root, 'organizations-export.xlsx'));
+const PEOPLE_FILE = path.resolve(process.argv[3] || path.join(root, 'people-export.xlsx'));
 
 const DEFAULT_CC = '+61';
 

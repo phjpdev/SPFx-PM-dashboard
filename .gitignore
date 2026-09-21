@@ -22,6 +22,11 @@ temp
 # Coverage directory used by tools like istanbul
 coverage
 
+# Contact exports and work logs — real data, never commit
+*.xlsx
+*.csv
+~$*
+
 # OSX
 .DS_Store
 
