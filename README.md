@@ -1,77 +1,122 @@
-# 3-edge-dashboard
+# SPFx Project Management Dashboard
 
-## Summary
+A SharePoint Framework (SPFx) solution that replaces the pile of spreadsheets a
+structural steel detailing firm was using to run its projects. Two React web
+parts sit on the company's existing SharePoint site and read and write SharePoint
+lists directly — no separate backend, no separate login, no extra hosting bill.
 
-Short summary on functionality and used technologies.
+## The problem
 
-[picture of the solution in action, if possible]
+The business ran on Excel. Project budgets lived in one workbook, weekly staff
+planning in another, RFIs in a third, and the sales pipeline in a Pipedrive trial
+nobody wanted to pay for. Hours came out of Time Doctor as CSV and got pasted in
+by hand. Nothing reconciled: the hours a project had burned, the hours it was
+sold for, and the hours staff were planning to spend next week were three
+separate numbers that nobody could line up without an afternoon of copy-paste.
 
-## Used SharePoint Framework Version
+Everything already lived in Microsoft 365, so the fix was to put the tracking
+where the files already were. One SPFx solution, deployed to the tenant, using
+SharePoint lists as the database and the signed-in M365 identity for permissions.
 
-![version](https://img.shields.io/badge/version-1.22.2-green.svg)
+## What it does
 
-## Applies to
+**Manager dashboard** (`ManagerDashboardWebPart`) — six modules behind one nav:
 
-- [SharePoint Framework](https://aka.ms/spfx)
-- [Microsoft 365 tenant](https://docs.microsoft.com/sharepoint/dev/spfx/set-up-your-developer-tenant)
+| Module | What it covers |
+| --- | --- |
+| Projects | Budget vs. actual hours, progress claims, multiple invoices per project, delivered/archived state |
+| RFIs | Raise an RFI against a project, pre-filled from project contacts, exported to PDF on company letterhead and drafted into an email to the client |
+| EWOs | Extra work orders tracked against the project they belong to |
+| Tasks | Weekly planning board — plan hours per person per day, track WIP %, roll unfinished tasks into next week at the percentage they reached |
+| Checklist | Multi-phase QA checklist per project, synced across users, exported to PDF |
+| CRM | Contacts, companies, RFQs, quotes and won-work (WIP), with quote-to-project linking |
 
-> Get your own free development tenant by subscribing to [Microsoft 365 developer program](http://aka.ms/o365devprogram)
+**Staff dashboard** (`StaffDashboardWebPart`) — a read-mostly view of the same
+projects and RFIs for people who shouldn't be editing budgets.
 
-## Prerequisites
+Some specifics worth calling out:
 
-> Any special pre-requisites?
+- **Time Doctor import.** Tracked hours are matched to projects by project
+  number and written back to the project record, so budget-vs-actual is live
+  rather than a monthly reconciliation exercise.
+- **Quote → project.** A won quote links to (or creates) the project it becomes,
+  carrying the site address and estimated hours across, so the sales number and
+  the delivery number are the same number.
+- **Offline-tolerant writes.** SharePoint throttles hard (HTTP 429). Reads retry
+  with backoff, writes are optimistic against local state and reconciled after,
+  and a failed load reports a failure instead of quietly rendering as "no data".
+- **Schema self-healing.** The service provisions missing list columns on first
+  run rather than requiring a manual list setup before the web part works.
 
-## Solution
+## Built with
 
-| Solution    | Author(s)                                               |
-| ----------- | ------------------------------------------------------- |
-| folder name | Author details (name, company, twitter alias with link) |
+TypeScript 5.8 · React 17 · SPFx 1.22 · Fluent UI · Heft · jsPDF (letterhead
+export) · SheetJS (spreadsheet import) · SharePoint REST + Microsoft Graph
 
-## Version history
+~15k lines of TypeScript across two web parts and a shared service layer.
 
-| Version | Date             | Comments        |
-| ------- | ---------------- | --------------- |
-| 1.1     | March 10, 2021   | Update comment  |
-| 1.0     | January 29, 2021 | Initial release |
+## Architecture
 
-## Disclaimer
+```
+src/
+  shared/
+    services/SharePointService.ts   REST wrapper: lists, attachments, retry/backoff,
+                                    column provisioning, settings store
+    models/                         IProject, ITask, ICrm — the list schemas
+    components/                     Form primitives shared by both web parts
+    utils/                          PDF letterhead, RFI defaults and filenames
+  webparts/
+    managerDashboard/               6 modules (see table above)
+    staffDashboard/                 Project + RFI tracker, read-mostly
+scripts/
+  generate-crm-static.mjs           Contact export (.xlsx) -> bundled JSON
+  generate-sample-crm.mjs           Generates the synthetic sample dataset
+```
 
-**THIS CODE IS PROVIDED _AS IS_ WITHOUT WARRANTY OF ANY KIND, EITHER EXPRESS OR IMPLIED, INCLUDING ANY IMPLIED WARRANTIES OF FITNESS FOR A PARTICULAR PURPOSE, MERCHANTABILITY, OR NON-INFRINGEMENT.**
+SharePoint lists back everything: `3Edge_Projects`, `3Edge_RFIs`, `WeeklyTasks`,
+`TeamMembers`, `3Edge_Settings`, `3Edge_Checklist*`, and `3Edge_CRM_*`.
 
----
+## A note on the data in this repo
 
-## Minimal Path to Awesome
+The production deployment seeds its CRM from a real contact export. That data
+belongs to the client, so it is not in this repository. What ships here instead
+is a **synthetic dataset of the same shape and size** — 512 companies and 645
+people generated by `scripts/generate-sample-crm.mjs`, using
+[ACMA fiction-reserved phone numbers](https://www.acma.gov.au/phone-numbers-use-films-and-creative-works)
+and `.example.com` addresses, so nothing in here can reach a real person.
 
-- Clone this repository
-- Ensure that you are at the solution folder
-- in the command-line run:
-  - `npm install -g @rushstack/heft`
-  - `npm install`
-  - `heft start`
+Likewise, the CRM module's access code is a web part property configured per
+site, not a value in source.
 
-> Include any additional steps as needed.
+## Running it
 
-Other build commands can be listed using `heft --help`.
+Requires Node 22.x and an M365 tenant with an app catalog.
 
-## Features
+```bash
+npm install -g @rushstack/heft
+npm install
+heft start          # local workbench
+heft test --clean --production && heft package-solution --production
+```
 
-Description of the extension that expands upon high-level summary above.
+The packaged `.sppkg` goes to the tenant app catalog, then the web part gets
+added to a site page. On first load the service provisions any missing lists and
+columns. Set **CRM access code** in the web part property pane before the CRM
+module will open.
 
-This extension illustrates the following concepts:
+To regenerate the sample dataset:
 
-- topic 1
-- topic 2
-- topic 3
+```bash
+node scripts/generate-sample-crm.mjs
+```
 
-> Notice that better pictures and documentation will increase the sample usage and the value you are providing for others. Thanks for your submissions advance.
+To build the bundle from a real contact export instead:
 
-> Share your web part with others through Microsoft 365 Patterns and Practices program to get visibility and exposure. More details on the community, open-source projects and other activities from http://aka.ms/m365pnp.
+```bash
+node scripts/generate-crm-static.mjs path/to/organizations.xlsx path/to/people.xlsx
+```
 
-## References
+## Status
 
-- [Getting started with SharePoint Framework](https://docs.microsoft.com/sharepoint/dev/spfx/set-up-your-developer-tenant)
-- [Building for Microsoft teams](https://docs.microsoft.com/sharepoint/dev/spfx/build-for-teams-overview)
-- [Use Microsoft Graph in your solution](https://docs.microsoft.com/sharepoint/dev/spfx/web-parts/get-started/using-microsoft-graph-apis)
-- [Publish SharePoint Framework applications to the Marketplace](https://docs.microsoft.com/sharepoint/dev/spfx/publish-to-marketplace-overview)
-- [Microsoft 365 Patterns and Practices](https://aka.ms/m365pnp) - Guidance, tooling, samples and open-source controls for your Microsoft 365 development
-- [Heft Documentation](https://heft.rushstack.io/)
+Built and maintained solo as a freelance engagement, March–August 2026, and in
+daily use by the team it was built for.
