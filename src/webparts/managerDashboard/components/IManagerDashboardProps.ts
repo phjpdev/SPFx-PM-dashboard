@@ -5,4 +5,6 @@ export interface IManagerDashboardProps {
   userDisplayName: string;
   spHttpClient: SPHttpClient;
   msGraphClientFactory: MSGraphClientFactory;
+  /** Access code for the CRM module, set per site in the web part property pane. */
+  crmAccessCode: string;
 }

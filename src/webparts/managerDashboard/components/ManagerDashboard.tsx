@@ -1718,9 +1718,12 @@ const ManagerDashboard: React.FC<IManagerDashboardProps> = (props) => {
     }, 1000);
     return () => clearInterval(tick);
   }, [crmLockedUntil]);
+  // Configured per site in the web part property pane — never checked into source.
+  const crmAccessCode = props.crmAccessCode || '';
+  const crmConfigured = crmAccessCode.length > 0;
   const crmTryUnlock = (): void => {
-    if (crmLockedUntil) return;
-    if (crmPw === 'CHANGE-ME-IN-WEB-PART-PROPERTIES') {
+    if (crmLockedUntil || !crmConfigured) return;
+    if (crmPw === crmAccessCode) {
       setCrmUnlocked(true); setCrmPw(''); setCrmPwError(false); setCrmAttempts(0);
     } else {
       const next = crmAttempts + 1;
@@ -2790,9 +2793,11 @@ const ManagerDashboard: React.FC<IManagerDashboardProps> = (props) => {
               <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center', minHeight: 320, gap: 16 }}>
                 <div style={{ fontFamily: 'Montserrat', fontWeight: 700, fontSize: 15, color: '#d3d1c7', letterSpacing: '.1em' }}>CRM ACCESS</div>
                 <div style={{ fontFamily: 'Montserrat', fontSize: 12, color: '#8a9bb0' }}>
-                  {crmLockedUntil ? 'Too many attempts — try again in' : 'Enter password to continue'}
+                  {!crmConfigured
+                    ? 'No access code set — add one in the web part properties'
+                    : crmLockedUntil ? 'Too many attempts — try again in' : 'Enter password to continue'}
                 </div>
-                {crmLockedUntil ? (
+                {!crmConfigured ? null : crmLockedUntil ? (
                   <div style={{ fontFamily: 'Montserrat', fontWeight: 700, fontSize: 22, color: '#c0392b', letterSpacing: '.05em' }}>
                     {`${String(Math.floor(crmLockRemain / 60)).padStart(2, '0')}:${String(crmLockRemain % 60).padStart(2, '0')}`}
                   </div>

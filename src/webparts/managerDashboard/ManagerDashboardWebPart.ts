@@ -12,6 +12,7 @@ import { IManagerDashboardProps } from './components/IManagerDashboardProps';
 
 export interface IManagerDashboardWebPartProps {
   description: string;
+  crmAccessCode: string;
 }
 
 export default class ManagerDashboardWebPart extends BaseClientSideWebPart<IManagerDashboardWebPartProps> {
@@ -23,7 +24,8 @@ export default class ManagerDashboardWebPart extends BaseClientSideWebPart<IMana
         siteUrl: this.context.pageContext.web.absoluteUrl,
         userDisplayName: this.context.pageContext.user.displayName,
         spHttpClient: this.context.spHttpClient,
-        msGraphClientFactory: this.context.msGraphClientFactory
+        msGraphClientFactory: this.context.msGraphClientFactory,
+        crmAccessCode: this.properties.crmAccessCode || ''
       }
     );
 
@@ -51,6 +53,10 @@ export default class ManagerDashboardWebPart extends BaseClientSideWebPart<IMana
               groupFields: [
                 PropertyPaneTextField('description', {
                   label: 'Description'
+                }),
+                PropertyPaneTextField('crmAccessCode', {
+                  label: 'CRM access code',
+                  description: 'Required before the CRM module will open. Leave blank to keep the module closed.'
                 })
               ]
             }
