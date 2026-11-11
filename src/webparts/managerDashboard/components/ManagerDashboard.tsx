@@ -438,6 +438,19 @@ const ProjForm: React.FC<ProjFormProps> = ({ initial, isNew, projects, spService
     if (k === 'projNum') setDupError('');
   };
 
+  // Rolled up from this project's EWO rows. Each EWO keeps its own hand-entered
+  // hours, so this is display-only. Matched on initial.id because EWOs point at
+  // the id the project loaded with, even if its number is being edited here.
+  const ewoHrs = React.useMemo(() => {
+    const ewos = isNew ? [] : projects.filter(p => p.isEwo && p.parentId === initial.id);
+    const round = (n: number): number => Math.round(n * 100) / 100;
+    return {
+      count: ewos.length,
+      used: round(ewos.reduce((s, e) => s + (Number(e.hrsUsed) || 0), 0)),
+      allowed: round(ewos.reduce((s, e) => s + (Number(e.hrsAllowed) || 0), 0)),
+    };
+  }, [projects, isNew, initial.id]);
+
   const usedNums = React.useMemo(() => {
     const s = new Set(projects.map(p => p.projNum.toUpperCase()));
     // Exclude current project's original number when editing
@@ -556,7 +569,7 @@ const ProjForm: React.FC<ProjFormProps> = ({ initial, isNew, projects, spService
       </div>
 
       <SDiv label="Hours & RFIs" />
-      <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr 1fr', gap: '14px 18px' }}>
+      <div style={{ display: 'grid', gridTemplateColumns: d.isEwo ? 'repeat(3, minmax(0, 1fr))' : 'repeat(4, minmax(0, 1fr))', gap: '14px 18px' }}>
         <FF label="Hours Allowed">
           <input style={inp} type="number" step="0.5" value={d.hrsAllowed} onChange={e => set('hrsAllowed', Number(e.target.value))} />
         </FF>
@@ -571,6 +584,19 @@ const ProjForm: React.FC<ProjFormProps> = ({ initial, isNew, projects, spService
             title="Synced nightly from Time Doctor — not editable here."
           />
         </FF>
+        {!d.isEwo && (
+          <FF label="EWO Hours">
+            <input
+              style={{ ...inp, opacity: 0.65, cursor: 'not-allowed' }}
+              type="number"
+              value={ewoHrs.used}
+              readOnly
+              title={ewoHrs.count === 0
+                ? 'No EWOs on this project yet.'
+                : 'Hours used across ' + ewoHrs.count + ' EWO' + (ewoHrs.count !== 1 ? 's' : '') + ' (' + ewoHrs.allowed + 'h allowed). Edit hours on each EWO.'}
+            />
+          </FF>
+        )}
         <FF label="RFIs Allowed" required>
           <input style={inp} type="number" value={d.rfisAllowed} onChange={e => set('rfisAllowed', Number(e.target.value))} />
         </FF>
